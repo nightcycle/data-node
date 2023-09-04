@@ -37,8 +37,11 @@ export type DataNodeService = {
 	RegisterDataNode: <V>(self: DataNodeService, path: string, initialValue: V, getMetadata: ((player: Player) -> {[any]: any})?, serializer: Serializer<V>?, deserializer: Deserializer<V>?) -> (),
 	RegisterOrderedDataNode: (self: DataNodeService, path: string, initialValue: number, getMetadata: ((player: Player) -> {[any]: any})?) -> (),
 
-	GetPlayerDataNode: <V>(self: DataNodeService, player: Player, path: string) -> DataNode<V>?,
-	GetPlayerOrderedDataNode: <V>(self: DataNodeService, player: Player, path: string) -> OrderedDataNode?,
+	GetPlayerDataNode: <V>(self: DataNodeService, player: Player, path: string) -> DataNode<V>,
+	GetPlayerOrderedDataNode: <V>(self: DataNodeService, player: Player, path: string) -> OrderedDataNode,
+	
+	GetPlayerData: <V>(self: DataNodeService, player: Player, path: string, force: boolean) -> V,
+	GetPlayerOrderedData: (self: DataNodeService, player: Player, path: string, force: boolean) -> number,
 	
 	Destroy: (self: DataNodeService) -> (),
 	new: () -> DataNodeService,
@@ -113,6 +116,16 @@ function DataNodeService:GetPlayerOrderedDataNode<V>(player: Player, path: strin
 	local node = playerNodes[path]
 	assert(node, `missing ordered node for player {player.Name} at path {path}`)
 	return node
+end
+
+function DataNodeService:GetPlayerData<V>(player: Player, path: string, force: boolean): V
+	local node: DataNode<V> = self:GetPlayerDataNode(player, path)
+	return node:Get(force)
+end
+
+function DataNodeService:GetPlayerOrderedData(player: Player, path: string, force: boolean): number
+	local node: OrderedDataNode = self:GetPlayerOrderedDataNode(player, path)
+	return node:Get(force)
 end
 
 function DataNodeService.new()

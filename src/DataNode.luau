@@ -37,7 +37,7 @@ export type BaseDataNodeProperties<V> = {
 export type BaseDataNodeFunctions<Self, V> = {
 	init: (maid: Maid) -> nil,
 	Destroy: (self: Self) -> nil,
-	Get: (self: Self, force: boolean?) -> (V?, boolean),
+	Get: (self: Self, force: boolean?) -> (V, boolean),
 	Set: (self: Self, data: V, force: boolean?) -> boolean,
 	Update: (self: Self, transformer: (V) -> V, force: boolean?) -> (V?, boolean),
 	Remove: (self: Self) -> nil,
@@ -51,7 +51,7 @@ export type BaseDataNode<V> = CompositeBaseDataNode<CompositeBaseDataNode<any, V
 -- Class
 type DataNodeProperties<V> = {
 	DataStore: DataStore,
-	_Value: V?,
+	_Value: V,
 	_EncodedValue: string?,
 	_Serialize: Serializer<V>,
 	_Deserialize: Deserializer<V>,
@@ -214,7 +214,7 @@ function DataNode:Update(transformer: (any) -> any, force: boolean?)
 	return self._Value, success
 end
 
-function DataNode:Get(force: boolean?): (any?, boolean)
+function DataNode:Get(force: boolean?): (any, boolean)
 	if self._Value ~= nil and not force then
 		return self._Value, true
 	end

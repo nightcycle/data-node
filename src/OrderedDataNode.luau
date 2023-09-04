@@ -17,7 +17,7 @@ export type OrderedDataNode = DataNode.BaseDataNode<number> & {
 	ClassName: "OrderedDataNode",
 	DataStore: OrderedDataStore,
 	IncrementOptions: DataStoreIncrementOptions,
-	_Value: number?,
+	_Value: number,
 	Increment: (self: OrderedDataNode, delta: number, force: boolean?) -> (number?, boolean),
 	new: (
 		player: Player, 
