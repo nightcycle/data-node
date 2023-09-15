@@ -279,14 +279,14 @@ function DataNode.new(player: Player, scope: string, initialValue: any, getMetad
 		end else nil,
 		_Serialize = if serializer then
 			function(v: any)
-				return if type(v) == "table" then CompressionUtil.encodeType(serializer(v)) else v
+				return if type(v) ~= "number" then CompressionUtil.Types.encode(serializer(v)) else v
 			end
 		else function(v: any) return v end,
 		_Deserialize = if deserializer then 
 			function(v: any)
 				local out: any
 				local success, _msg = pcall(function()
-					out = deserializer(CompressionUtil.decodeType(v))
+					out = deserializer(CompressionUtil.Types.decode(v))
 				end)
 				return if success then out else v	end
 		else function(v: any) return v end,
