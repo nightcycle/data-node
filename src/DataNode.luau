@@ -153,7 +153,7 @@ function DataNode:Set(data: unknown): string
 	local id: string
 
 	local encodedData: (unknown | string)? = self._Serialize(data)
-	if encodedData == self._EncodedValue and self._SetJobId ~= nil then
+	if encodedData == self._EncodedValue and self._SetJobId ~= nil and self._IsInitialized then
 		return self._SetJobId
 	end
 
@@ -354,8 +354,9 @@ function DataNode.new(
 
 	self._Value = self:Get()
 	if self._Value == nil then
-		self._Value = initialValue
+		self:Set(initialValue)
 	end
+	self._IsInitialized = true
 
 	return self
 end
