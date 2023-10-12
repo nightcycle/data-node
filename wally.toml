@@ -9,8 +9,11 @@ exclude = [ "Packages", ".vscode",]
 
 [dependencies]
 Maid = "nightcycle/maid@1.1.4"
-CompressionUtil = "nightcycle/compression-util@3.0.0"
+CompressionUtil = "nightcycle/compression-util@3.1.2"
 Signal = "nightcycle/signal@1.0.2"
 TableUtil = "nightcycle/table-util@1.1.0"
 ServiceProxy = "nightcycle/service-proxy@1.0.0"
 MockDataStoreService = "buildthomas/mockdatastoreservice@1.0.3"
+MockMessagingService = "nightcycle/mock-messaging-service@1.0.1"
+Queue = "nightcycle/queue@2.0.2"
+TestEZ = "roblox/testez@0.4.1"

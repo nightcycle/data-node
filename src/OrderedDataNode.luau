@@ -1,9 +1,10 @@
-
 --!strict
 local _Package = script.Parent
 local _Packages = _Package.Parent
 -- Services
 local DataStoreService = require(_Packages:WaitForChild("MockDataStoreService")) :: DataStoreService
+local RateService = require(_Package:WaitForChild("RateService"))
+
 -- Packages
 -- Modules
 local DataNode = require(_Package:WaitForChild("DataNode"))
@@ -18,19 +19,13 @@ export type OrderedDataNode = DataNode.BaseDataNode<number> & {
 	DataStore: OrderedDataStore,
 	IncrementOptions: DataStoreIncrementOptions,
 	_Value: number,
-	Increment: (self: OrderedDataNode, delta: number, force: boolean?) -> (number?, boolean),
-	new: (
-		player: Player, 
-		scope: string, 
-		initialValue: number, 
-		getMetadata: ((player: Player) -> {[any]: any})?
-	) -> OrderedDataNode,
-	GetSortedList: (self: OrderedDataNode, limit: number, isAscending: boolean) -> { [number]: SortedDataEntry },
+	Increment: (self: OrderedDataNode, delta: number) -> (number?, boolean),
+	new: (userId: number, domain: string, scope: string, initialValue: number, getMetadata: ((userId: number) -> { [any]: any })?) -> OrderedDataNode,
 }
 
 -- Constants
 local PAGE_LENGTH = 100
-local HUGE = 2^62
+local HUGE = 2 ^ 62
 
 -- Variables
 -- References
@@ -41,47 +36,7 @@ local OrderedDataNode = {} :: OrderedDataNode
 OrderedDataNode.__index = OrderedDataNode :: any
 setmetatable(OrderedDataNode, DataNode)
 
--- @TODO
-function OrderedDataNode:GetSortedList(limit: number, isAscending: boolean)
-	local pages = self.DataStore:GetSortedAsync(isAscending, PAGE_LENGTH, -HUGE, HUGE)
-	
-	local list: { [number]: SortedDataEntry } = {}
-	local function dumpPages()
-		local page = pages:GetCurrentPage()
-		
-		for rank: number, data in ipairs(page) do
-			if #list >= limit then
-				break
-			end
-			local key = data.key
-			local value = data.value
-			table.insert(list, {
-				UserId = tonumber(key) :: number,
-				Value = value,
-			})
-		end
-		
-		local success
-		local attempts = 0
-		repeat
-			success = pcall(function() end)
-			attempts += 1
-			if not success then
-				task.wait(DataNode.RETRY_DELAY)
-			end
-		until success or attempts > DataNode.RETRY_LIMIT
-		
-		if success and #list < limit then
-			pages:AdvanceToNextPageAsync()
-			dumpPages()
-		end
-	end
-	dumpPages()
-	
-	return list
-end
-
-function OrderedDataNode:Increment(delta: number, force: boolean?)
+function OrderedDataNode:Increment(delta: number)
 	local metadata = if self._GetMetaData then self._GetMetaData() else nil
 
 	if metadata then
@@ -89,12 +44,11 @@ function OrderedDataNode:Increment(delta: number, force: boolean?)
 	else
 		self.IncrementOptions:SetMetadata({})
 	end
-	
 
 	local function increment()
 		local value = self._Value
 		local success, msg = pcall(function()
-			local val = self.DataStore:IncrementAsync(self.Key, delta, { self.Player.UserId }, self.IncrementOptions)
+			local val = self.DataStore:IncrementAsync(self.Key, delta, { self._UserId }, self.IncrementOptions)
 			value = val
 			return val
 		end)
@@ -103,51 +57,38 @@ function OrderedDataNode:Increment(delta: number, force: boolean?)
 		end
 		return value, success
 	end
-	
-	local value, success
-	
-	if force then
-		local attempts = 0
-		repeat
-			attempts += 1
-			value, success = increment()
-			if not success then
-				task.wait(DataNode.RETRY_DELAY)
-			end
-		until success or attempts > DataNode.RETRY_LIMIT
-		if success then
-			self._Value = value
-		end
-	else
-		local val: number? = self._Value
-		if val then
-			val += delta
-			self._Value = val
-		end
 
-		success = true
+	local value, success = increment()
+
+	if success then
+		self._Value = value
 	end
-	
+
 	if success and delta ~= 0 then
 		self.OnChanged:Fire(self._Value)
 	end
-	
+
 	return self._Value, success
 end
 
 function OrderedDataNode.new(
-	player: Player, 
-	scope: string, 
+	userId: number,
+	domain: string,
+	scope: string,
 	initialValue: number,
-	getMetadata: ((player: Player) -> {[any]: any})?
+	getMetadata: ((userId: number) -> { [any]: any })?
 ): OrderedDataNode
-	local self: OrderedDataNode = setmetatable(DataNode.new(player, scope, initialValue, getMetadata), OrderedDataNode) :: any
-	
-	self.DataStore = DataStoreService:GetOrderedDataStore(DataNode.BASE_DOMAIN, scope)
-	local incrementOptions = Instance.new("DataStoreIncrementOptions")
-	self._Maid:GiveTask(incrementOptions)
-	self.IncrementOptions = incrementOptions
-	
+	local base = DataNode.new(userId, domain, scope, initialValue, getMetadata)
+
+	local self: OrderedDataNode = setmetatable(base, OrderedDataNode) :: any
+
+	self._Domain = domain
+	self._Scope = scope
+
+	self.DataStore = DataStoreService:GetOrderedDataStore(self._Domain, self._Scope)
+
+	self.IncrementOptions = self._Maid:GiveTask(Instance.new("DataStoreIncrementOptions"))
+
 	return self
 end
 

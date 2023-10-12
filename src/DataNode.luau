@@ -1,88 +1,112 @@
 --!strict
 local _Package = script.Parent
 local _Packages = _Package.Parent
+
 -- Services
 local DataStoreService = require(_Packages:WaitForChild("MockDataStoreService")) :: DataStoreService
--- local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+
 -- Packages
 local Maid = require(_Packages:WaitForChild("Maid"))
 local Signal = require(_Packages:WaitForChild("Signal"))
 local CompressionUtil = require(_Packages:WaitForChild("CompressionUtil"))
--- local NetworkUtil = require(_Packages:WaitForChild("NetworkUtil"))
+local RateService = require(_Package:WaitForChild("RateService"))
+
 -- Modules
 --Types
-type Table = {[any]: any}
+type Table = { [any]: any }
 type Signal = Signal.Signal
 type Maid = Maid.Maid
 export type UserId = number
 export type UserIdKey = string
-export type Serializer<V> = (data: V) -> string
-export type Deserializer<V> = (data: string) -> V
+export type Serializer<V> = (data: V) -> (string | V)?
+export type Deserializer<V> = (data: (string | V)?) -> V
 
 -- Types
 export type BaseDataNodeProperties<V> = {
 	__index: BaseDataNodeProperties<V>,
 	_Maid: Maid,
 	_IsAlive: boolean,
-	_GetMetaData: (() -> {[any]: any})?, 
-	RETRY_LIMIT: number,
-	RETRY_DELAY: number,
-	BASE_DOMAIN: string,
+	_Player: Player?,
+	_UserId: number,
+	_Domain: string,
+	_Scope: string,
+	_GetMetaData: (() -> { [any]: any })?,
 	OnChanged: Signal,
 	ClassName: "DataNode",
 	Key: UserIdKey,
-	Player: Player,
 	SetOptions: DataStoreSetOptions,
 }
 export type BaseDataNodeFunctions<Self, V> = {
 	init: (maid: Maid) -> nil,
 	Destroy: (self: Self) -> nil,
-	Get: (self: Self, force: boolean?) -> (V, boolean),
-	Set: (self: Self, data: V, force: boolean?) -> boolean,
-	Update: (self: Self, transformer: (V) -> V, force: boolean?) -> (V?, boolean),
-	Remove: (self: Self) -> nil,
+	Get: (self: Self, force: boolean?) -> (V, DataStoreKeyInfo),
+	Remove: (self: Self) -> (V?, DataStoreKeyInfo),
+	Set: (self: Self, data: V) -> string,
+	Update: (self: Self, transformer: (V?) -> V?) -> (V?, DataStoreKeyInfo),
 }
 type CompositeBaseDataNode<Self, V> = BaseDataNodeProperties<V> & BaseDataNodeFunctions<Self, V>
 export type BaseDataNode<V> = CompositeBaseDataNode<CompositeBaseDataNode<any, V>, V>
 
--- Constants
--- Variables
--- References
--- Class
 type DataNodeProperties<V> = {
 	DataStore: DataStore,
+	_IsInitialized: boolean,
 	_Value: V,
-	_EncodedValue: string?,
+	_SetJobId: string?,
+	_EncodedValue: (string | V)?,
+	_GetKeyInfo: DataStoreKeyInfo?,
+	_UpdateKeyInfo: DataStoreKeyInfo?,
 	_Serialize: Serializer<V>,
 	_Deserialize: Deserializer<V>,
 } & BaseDataNodeProperties<V>
 
 type DataNodeFunctions<Self, V> = {
-	new: (player: Player, scope: string, initialValue: V, getMetadata: ((player: Player) -> {[any]: any})?, serializer: Serializer<V>?, deserializer: Deserializer<V>?) -> Self,
+	new: (
+		userId: number,
+		domain: string,
+		scope: string,
+		initialValue: V,
+		getMetadata: ((userId: number) -> { [any]: any })?,
+		serializer: Serializer<V>?,
+		deserializer: Deserializer<V>?
+	) -> Self,
 } & BaseDataNodeFunctions<Self, V>
 type CompositeDataNode<Self, V> = DataNodeProperties<V> & DataNodeFunctions<Self, V>
 export type DataNode<V> = CompositeDataNode<CompositeDataNode<any, V>, V>
 
---Constants
+-- Constants
 -- Variables
 -- References
--- Private Functions
+-- Private functions
+function getByteSize(unknown: unknown?): number
+	local size: number?
+	if type(unknown) == "string" then
+		size = unknown:len()
+	elseif type(unknown) == "number" then
+		size = 16
+	elseif type(unknown) == "boolean" then
+		size = 16
+	elseif type(unknown) == "nil" then
+		size = 0
+	elseif type(unknown) == "table" then
+		error(`you can't store a table using DataNode as it needs to estimate the byte size`)
+	elseif type(unknown) == "userdata" or type(unknown) == "function" or type(unknown) == "thread" then
+		error(`you can't store data of type {type(unknown)}`)
+	end
+	assert(size ~= nil, `type {type(unknown)} not supported`)
+	return size
+end
 -- Class
-
 local DataNode: DataNode<any> = {} :: any
 DataNode.__index = DataNode
-DataNode.RETRY_LIMIT = 10
-DataNode.RETRY_DELAY = 0.5
-DataNode.BASE_DOMAIN = "DataNodeBase"
-
 
 function DataNode:Destroy()
 	if not self._IsAlive then
 		return
 	end
-	
+
 	self._IsAlive = false
-	self:Set(self._Value, true)
+	self:Set(self._Value)
 	self._Maid:Destroy()
 	local t: any = self
 	for k, v in pairs(t) do
@@ -92,17 +116,123 @@ function DataNode:Destroy()
 	return nil
 end
 
-function DataNode:Set(data: any, force: boolean?)
-	local initialValue = self._EncodedValue
-	local function set()
-		local success, errorMessage = pcall(function()
-			self.DataStore:SetAsync(self.Key, self._Serialize(data), { self.Player.UserId }, self.SetOptions)
+function DataNode:Remove(): (unknown?, DataStoreKeyInfo)
+	local keyInfo: DataStoreKeyInfo
+	local encodedFinalValue: (unknown | string)?
+
+	local success: boolean, errorMessage: string?
+
+	RateService:Write(`{self._Domain}/{self._Scope}`, self._UserId, function(): (boolean, number)
+		success, errorMessage = pcall(function()
+			encodedFinalValue, keyInfo = self.DataStore:RemoveAsync(self.Key)
 		end)
 		if not success then
-			warn(errorMessage)
+			if errorMessage then
+				warn(errorMessage)
+			end
 		end
-		return success
+		return success, 0
+	end)
+
+	assert(success, errorMessage)
+
+	local finalData: unknown?
+	if encodedFinalValue then
+		self._IsInitialized = false
+		finalData = self._Deserialize(encodedFinalValue)
 	end
+
+	self._EncodedValue = nil
+	self._Value = nil
+	self.OnChanged:Fire(self._Value)
+
+	return finalData, keyInfo
+end
+
+function DataNode:Set(data: unknown): string
+	local id: string
+
+	local encodedData: (unknown | string)? = self._Serialize(data)
+	if encodedData == self._EncodedValue and self._SetJobId ~= nil then
+		return self._SetJobId
+	end
+
+	local metadata = if self._GetMetaData then self._GetMetaData() else nil
+	if metadata then
+		self.SetOptions:SetMetadata(metadata)
+	else
+		self.SetOptions:SetMetadata({})
+	end
+
+	local success: boolean, errorMessage: string?
+
+	RateService:Write(`{self._Domain}/{self._Scope}`, self._UserId, function(): (boolean, number)
+		local size: number = getByteSize(encodedData)
+		success, errorMessage = pcall(function()
+			id = self.DataStore:SetAsync(self.Key, encodedData, { self._UserId }, self.SetOptions)
+		end)
+		if not success then
+			if errorMessage then
+				warn(errorMessage)
+			end
+		end
+		return success, size
+	end)
+
+	assert(success, errorMessage)
+	self._SetJobId = id
+	self._Value = self._Deserialize(encodedData)
+	self.OnChanged:Fire(self._Value)
+
+	return id
+end
+
+function DataNode:Get(force: boolean?): (unknown, DataStoreKeyInfo)
+	if self._IsInitialized and self._GetKeyInfo and force ~= true then
+		return self._Value, self._GetKeyInfo
+	end
+
+	local encodedData: (unknown | string)?, keyInfo: DataStoreKeyInfo
+	local success: boolean, errorMessage: string?
+
+	RateService:Read(`{self._Domain}/{self._Scope}`, self._UserId, function(): (boolean, number)
+		success, errorMessage = pcall(function()
+			encodedData, keyInfo = self.DataStore:GetAsync(self.Key)
+		end)
+		if not success then
+			if errorMessage then
+				warn(errorMessage)
+			end
+		end
+		return success, getByteSize(encodedData)
+	end)
+
+	assert(success, errorMessage)
+
+	local initialEncodedData: (unknown | string)? = self._EncodedValue
+	self._EncodedValue = encodedData
+
+	if self._EncodedValue ~= nil then
+		if type(self._EncodedValue) == "string" then
+			self._Value = self._Deserialize(self._EncodedValue) -- self._Deserialize(Base64.Decode(self._EncodedValue))
+		else
+			self._Value = self._Deserialize(self._EncodedValue)
+		end
+	else
+		self._Value = nil
+	end
+
+	self._GetKeyInfo = keyInfo
+
+	if initialEncodedData == encodedData then
+		self.OnChanged:Fire(self._Value)
+	end
+
+	return self._Value, keyInfo
+end
+
+function DataNode:Update(transformer: (unknown?) -> unknown?): (unknown?, DataStoreKeyInfo)
+	local initialEncodedValue: (unknown | string)? = self._EncodedValue
 
 	local metadata = if self._GetMetaData then self._GetMetaData() else nil
 
@@ -111,226 +241,122 @@ function DataNode:Set(data: any, force: boolean?)
 	else
 		self.SetOptions:SetMetadata({})
 	end
-	
-	local success
-	if force then
-		local attempts = 0
-		repeat
-			attempts += 1
-			success = set()
-			if not success then
-				task.wait(DataNode.RETRY_DELAY)
-			end
-		until success or attempts > DataNode.RETRY_LIMIT
-	else
-		success = true
-	end
-		if data then
-			if type(data) == "string" then
-				self._EncodedValue = self._Serialize(data) -- Base64.Encode(self._Serialize(data))
-			else
-				self._EncodedValue = self._Serialize(data)
-			end
-		else
-			self._EncodedValue = nil
-		end
-		if self._EncodedValue then
-			if type(self._EncodedValue) == "string" then
-				self._Value = self._Deserialize(self._EncodedValue) -- self._Deserialize(Base64.Decode(self._EncodedValue))
-			else
-					self._Value = self._Deserialize(self._EncodedValue)
-			end
-		else
-			self._Value = nil
-		end
-	if initialValue ~= data then
-		self.OnChanged:Fire(self._Value)
-	end
-	return success
-end
 
-function DataNode:Update(transformer: (any) -> any, force: boolean?)
-	
-	local metadata = if self._GetMetaData then self._GetMetaData() else nil
+	local outputEncodedValue: (unknown | string)?
+	local function transformerWrapper(rawValue: (unknown | string)?): (unknown | string)?
+		local outputValue = transformer(if rawValue then self._Deserialize(rawValue) else nil)
+		if outputValue then
+			outputEncodedValue = self._Serialize(outputValue)
+		end
+		return outputEncodedValue
+	end
 
-	if metadata then
-		self.SetOptions:SetMetadata(metadata)
-	else
-		self.SetOptions:SetMetadata({})
+	if self._IsInitialized and self._UpdateKeyInfo then
+		local expectedValue = transformerWrapper(self._EncodedValue)
+		if expectedValue == self._EncodedValue then
+			return self._Value, self._UpdateKeyInfo
+		end
 	end
-	
-	local initialValue = self._EncodedValue
-	local function transformerWrapper(rawValue: any)
-		 return self._Serialize(transformer(self._Deserialize(rawValue)))
-	end
-	local function update()
-		local value = self._EncodedValue
-		local success, msg = pcall(function()
-			value = self.DataStore:UpdateAsync(self.Key, transformerWrapper)
+
+	local success: boolean, errorMessage: string?
+	local retrievedEncodedValue: (unknown | string)?, keyInfo: DataStoreKeyInfo
+
+	RateService:Transform(function(): (boolean, number, number)
+		local inputSize = 0
+		local outputSize = 0
+		success, errorMessage = pcall(function()
+			retrievedEncodedValue, keyInfo = self.DataStore:UpdateAsync(self.Key, function(input: (unknown | string)?): (unknown | string)?
+				inputSize = getByteSize(input)
+				local out: (unknown | string)? = transformerWrapper(input)
+				outputSize = getByteSize(out)
+				return out
+			end)
 		end)
 		if not success then
-			warn(msg)
-		end
-		return value, success
-	end
-	
-	local value, success
-	if force then
-		local attempts = 0
-		repeat
-			attempts += 1
-			value, success = update()
-			if not success then
-				task.wait(DataNode.RETRY_DELAY)
+			if errorMessage then
+				warn(errorMessage)
 			end
-		until success or attempts > DataNode.RETRY_LIMIT
-		if success then
-			self._EncodedValue = value
 		end
+		return success, inputSize, outputSize
+	end)
+	assert(success, errorMessage)
+
+	self._EncodedValue = outputEncodedValue
+
+	if self._EncodedValue then
+		self._Value = self._Deserialize(self._EncodedValue)
 	else
-		value = transformerWrapper(initialValue)
-		if value then
-			if type(value) == "string" then
-				self._EncodedValue = self._Serialize(value) -- Base64.Encode(self._Serialize(value))
-			else
-				self._EncodedValue = self._Serialize(value)
-			end
-		else
-			self._EncodedValue = nil
-		end
+		self._Value = nil
 	end
-		if self._EncodedValue then
-			if type(self._EncodedValue) == "string" then
-				self._Value = self._Deserialize(self._EncodedValue) -- self._Deserialize(Base64.Decode(self._EncodedValue))
-			else
-					self._Value = self._Deserialize(self._EncodedValue)
-			end
-		else
-			self._Value = nil
-		end
-	if initialValue ~= value then
+	self._UpdateKeyInfo = keyInfo
+
+	if initialEncodedValue ~= outputEncodedValue then
 		self.OnChanged:Fire(self._Value)
 	end
-	return self._Value, success
+
+	return if retrievedEncodedValue then self._Deserialize(retrievedEncodedValue) else nil, keyInfo
 end
 
-function DataNode:Get(force: boolean?): (any, boolean)
-	if self._Value ~= nil and not force then
-		return self._Value, true
-	end
-	
-	local function get()
-		local data
-		local success, msg = pcall(function()
-			data = self.DataStore:GetAsync(self.Key)
-		end)
-		if not success then
-			warn(msg)
-		end
-		return data, success
-	end
-	
-	local data, success
-	local attempts = 0
-	repeat
-		attempts += 1
-		data, success = get()
-		if not success then
-			task.wait(DataNode.RETRY_DELAY)
-		end
-	until success or attempts > DataNode.RETRY_LIMIT
-	
-	if success then
-		self._EncodedValue = data
-		if self._EncodedValue then
-			if type(self._EncodedValue) == "string" then
-				self._Value = self._Deserialize(self._EncodedValue) -- self._Deserialize(Base64.Decode(self._EncodedValue))
-			else
-					self._Value = self._Deserialize(self._EncodedValue)
-			end
-		else
-			self._Value = nil
-		end
-	end
-	
-	return self._Value, success
-end
-
-function DataNode.new(player: Player, scope: string, initialValue: any, getMetadata: ((player: Player) -> {[any]: any})?, serializer: Serializer<any>?, deserializer: Deserializer<any>?)
+function DataNode.new(
+	userId: number,
+	domain: string,
+	scope: string,
+	initialValue: unknown,
+	getMetadata: ((userId: number) -> { [any]: any })?,
+	serializer: Serializer<any>?,
+	deserializer: Deserializer<any>?
+): DataNode<unknown>
 	local maid = Maid.new()
-	
-	local dataStoreOptions = Instance.new("DataStoreOptions")
-	maid:GiveTask(dataStoreOptions)
-	
-	local setOptions = Instance.new("DataStoreSetOptions")
-	setOptions:SetMetadata({})
-	maid:GiveTask(setOptions)
-	
+
 	local onChanged = Signal.new()
 	maid:GiveTask(onChanged)
-	maid.bind(player)
 
+	local self: DataNode<unknown> = setmetatable({}, DataNode) :: any
+	self._Maid = maid
+	self._IsAlive = true
+	self._GetMetaData = if getMetadata
+		then function()
+			return getMetadata(self._UserId)
+		end
+		else nil
 
-	local self: DataNode<any> = setmetatable({
-		_Maid = maid,
-		_IsAlive = true,
-		_GetMetaData = if getMetadata then function()
-			return getMetadata(player)
-		end else nil,
-		_Serialize = if serializer then
-			function(v: any)
-				return if type(v) ~= "number" then CompressionUtil.Types.encode(serializer(v)) else v
-			end
-		else function(v: any) return v end,
-		_Deserialize = if deserializer then 
-			function(v: any)
-				local out: any
-				local success, _msg = pcall(function()
-					out = deserializer(CompressionUtil.Types.decode(v))
-				end)
-				return if success then out else v	end
-		else function(v: any) return v end,
-		OnChanged = onChanged,
-		DataStore =  DataStoreService:GetDataStore(DataNode.BASE_DOMAIN, scope, dataStoreOptions),
-		_Value = initialValue,
-		Key = tostring(player.UserId),
-		SetOptions = setOptions,
-		Player = player,
-	}, DataNode) :: any
-	
-	-- if RunService:IsRunning() then
-	-- 	local updateEvent = NetworkUtil.getRemoteEvent(scope .. "_" .. UPDATE_SUFFIX, player)
-	-- 	maid:GiveTask(updateEvent)
-		
-	-- 	maid:GiveTask(onChanged:Connect(function(v: any)
-	-- 		updateEvent:FireClient(player, v)
-	-- 	end))
-		
-	-- 	local getFunction = NetworkUtil.getRemoteFunction(scope .. "_" .. GET_SUFFIX, player)
-	-- 	maid:GiveTask(getFunction)
-	-- 	getFunction.OnServerInvoke = function(plr: Player)
-	-- 		if player.UserId == plr.UserId then
-	-- 			return self._Value
-	-- 		end
-	-- 		error("Bad player")
-	-- 	end
-	-- else
-	-- 	local updateEvent = NetworkUtil.getBindableEvent(scope .. "_" .. UPDATE_SUFFIX)
-	-- 	maid:GiveTask(updateEvent)
-		
-	-- 	maid:GiveTask(onChanged:Connect(function(v: any)
-	-- 		updateEvent:Fire(v)
-	-- 	end))
-		
-	-- 	local getFunction = NetworkUtil.getBindableFunction(scope .. "_" .. GET_SUFFIX)
-	-- 	maid:GiveTask(getFunction)
-	-- 	getFunction.OnInvoke = function()
-	-- 		return self._Value
-	-- 	end
-	-- end
-	
-	self._Value = self:Get(true)
-	if self._Value == nil then self._Value = initialValue end
+	self._Serialize = serializer or function(v: unknown): string | unknown
+		return v
+	end
+
+	self._Deserialize = deserializer or function(v: string | unknown): unknown
+		return v
+	end
+
+	self.OnChanged = onChanged
+	self._Domain = domain
+	self._Scope = scope
+
+	self._IsInitialized = false
+	self._Value = initialValue
+	self._UserId = userId
+	self._SetJobId = nil
+	self._GetKeyInfo = nil
+	self.Key = tostring(self._UserId)
+
+	self.SetOptions = self._Maid:GiveTask(Instance.new("DataStoreSetOptions"))
+	self.SetOptions:SetMetadata({})
+
+	local dataStoreOptions = Instance.new("DataStoreOptions")
+	maid:GiveTask(dataStoreOptions)
+
+	self.DataStore = DataStoreService:GetDataStore(self._Domain, self._Scope, dataStoreOptions)
+
+	self._Player = Players:GetPlayerByUserId(self._UserId)
+	if self._Player then
+		maid.bind(self._Player)
+	end
+
+	self._Value = self:Get()
+	if self._Value == nil then
+		self._Value = initialValue
+	end
+
 	return self
 end
 

@@ -6,9 +6,7 @@ local TestEZ = require(game:GetService("ReplicatedStorage"):WaitForChild("Packag
 -- Constants
 -- Variables
 -- References
-local Client = game:GetService("ReplicatedStorage"):WaitForChild("Client") :: Folder
-local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared") :: Folder
-local Server = game:GetService("ServerScriptService"):WaitForChild("Server") :: Folder
+local Packages = game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("package") :: Folder
 
 type TestData = {
 	children: {[number]: TestData},
@@ -39,9 +37,14 @@ function parseResults(data: TestData, path: string)
 					if #data.errors > 0 then
 						for i, errorMessage in ipairs(data.errors) do
 							local finalLine = errorMessage:split("\n")[1]
-							local content = (finalLine:split(":")[3]):sub(2)
-							content = content:gsub("\"", "'")
-							result ..= basePath..":[\""..content.."\"]"
+							local success, _msg = pcall(function()
+								local content = (finalLine:split(":")[3]):sub(2)
+								content = content:gsub("\"", "'")
+								result ..= basePath..":[\""..content.."\"]"
+							end)
+							if not success then
+								result ..= basePath..":[\""..finalLine.."\"]"
+							end
 						end
 					else
 						result ..= basePath
@@ -71,11 +74,16 @@ function test()
 			end
 		end
 	end
-	testDomain(Client)
-	testDomain(Shared)
-	testDomain(Server)
+	testDomain(Packages)
 	
-	error(result)
+	if result:match("[failure]") then
+		error(result)
+	elseif result:match("[skipped]") then
+		warn(result)
+	else
+		print(result)
+	end
+
 	-- return result
 end
 
