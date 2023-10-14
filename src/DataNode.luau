@@ -330,7 +330,7 @@ function DataNode.new(
 
 	self._Deserialize = deserializer or function(data: (string | unknown)?): unknown?
 		if type(data) == "string" then
-			return CompressionUtil.Encoding.UTF8.fromUTF8(CompressionUtil.Types.decode(data))
+			return CompressionUtil.Types.decode(CompressionUtil.Encoding.UTF8.fromUTF8(data))
 		else
 			return data
 		end
@@ -342,6 +342,7 @@ function DataNode.new(
 
 	self._IsInitialized = false
 	self._Value = initialValue
+	self._EncodedValue = self._Serialize(initialValue)
 	self._UserId = userId
 	self._SetJobId = nil
 	self._GetKeyInfo = nil
