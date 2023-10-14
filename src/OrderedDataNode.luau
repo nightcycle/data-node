@@ -19,13 +19,11 @@ export type OrderedDataNode = DataNode.BaseDataNode<number> & {
 	DataStore: OrderedDataStore,
 	IncrementOptions: DataStoreIncrementOptions,
 	_Value: number,
-	Increment: (self: OrderedDataNode, delta: number) -> (number?, boolean),
+	Increment: (self: OrderedDataNode, delta: number) -> number,
 	new: (userId: number, domain: string, scope: string, initialValue: number, getMetadata: ((userId: number) -> { [any]: any })?) -> OrderedDataNode,
 }
 
 -- Constants
-local PAGE_LENGTH = 100
-local HUGE = 2 ^ 62
 
 -- Variables
 -- References
@@ -45,30 +43,20 @@ function OrderedDataNode:Increment(delta: number)
 		self.IncrementOptions:SetMetadata({})
 	end
 
-	local function increment()
-		local value = self._Value
-		local success, msg = pcall(function()
-			local val = self.DataStore:IncrementAsync(self.Key, delta, { self._UserId }, self.IncrementOptions)
-			value = val
-			return val
-		end)
-		if not success then
-			warn(msg)
-		end
-		return value, success
-	end
+	local value: number
 
-	local value, success = increment()
+	RateService:Transform(function(): (boolean, number, number)
+		value = self.DataStore:IncrementAsync(self.Key, delta, { self._UserId }, self.IncrementOptions)
+		return true, 16, 16
+	end)
 
-	if success then
+	if value then
 		self._Value = value
+		if delta ~= 0 then
+			self.OnChanged:Fire(self._Value)
+		end
 	end
-
-	if success and delta ~= 0 then
-		self.OnChanged:Fire(self._Value)
-	end
-
-	return self._Value, success
+	return self._Value
 end
 
 function OrderedDataNode.new(

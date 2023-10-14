@@ -320,12 +320,20 @@ function DataNode.new(
 		end
 		else nil
 
-	self._Serialize = serializer or function(v: unknown): string | unknown
-		return v
+	self._Serialize = serializer or function(data: unknown?): (string | unknown)?
+		if type(data) == "userdata" or type(data) == "string" then
+			return CompressionUtil.Encoding.UTF8.toUTF8(CompressionUtil.Types.encode(data :: any))
+		else
+			return data
+		end
 	end
 
-	self._Deserialize = deserializer or function(v: string | unknown): unknown
-		return v
+	self._Deserialize = deserializer or function(data: (string | unknown)?): unknown?
+		if type(data) == "string" then
+			return CompressionUtil.Encoding.UTF8.fromUTF8(CompressionUtil.Types.decode(data))
+		else
+			return data
+		end
 	end
 
 	self.OnChanged = onChanged

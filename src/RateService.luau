@@ -38,9 +38,9 @@ export type RateService = {
 	_IncrementQueue: Queue<string>,
 	_WriteQueue: Queue<string>,
 
-	Transform: (self: RateService, job: TransformJob) -> boolean,
-	Read: (self: RateService, path: string, userId: number, job: Job) -> boolean,
-	Write: (self: RateService, path: string, userId: number, job: Job) -> boolean,
+	Transform: (self: RateService, job: TransformJob) -> (),
+	Read: (self: RateService, path: string, userId: number, job: Job) -> (),
+	Write: (self: RateService, path: string, userId: number, job: Job) -> (),
 	Destroy: (self: RateService) -> (),
 	new: () -> RateService,
 	init: (maid: Maid) -> nil,
@@ -63,7 +63,7 @@ function getJobId(userId: number, path: string, jobType: JobType): string
 	return `{jobType}_{path}_{userId}`
 end
 
-function processJob(serviceMaid: Maid, jobId: string, jobRegistry: { [string]: Job }, job: Job, queue: Queue<string>, onJobComplete: Signal): boolean
+function processJob(serviceMaid: Maid, jobId: string, jobRegistry: { [string]: Job }, job: Job, queue: Queue<string>, onJobComplete: Signal): ()
 	local maid = Maid.new()
 	local jobCompleteSignal = maid:GiveTask(Signal.new())
 
@@ -71,19 +71,26 @@ function processJob(serviceMaid: Maid, jobId: string, jobRegistry: { [string]: J
 	jobRegistry[jobId] = job
 
 	local isSuccess = false
+	local message: string?
 
 	queue:Add(jobId, -tick())
 
-	maid:GiveTask(onJobComplete:Connect(function(completedJobId: string, isJobSuccess: boolean)
+	maid:GiveTask(onJobComplete:Connect(function(completedJobId: string, isJobSuccess: boolean, jobMessage: string?)
 		if completedJobId == jobId then
 			isSuccess = isJobSuccess
+			message = jobMessage
 			jobCompleteSignal:Fire()
 		end
 	end))
 
 	jobCompleteSignal:Wait()
+	maid:Destroy()
 
-	return isSuccess
+	if not isSuccess then
+		if message then
+			error(message)
+		end
+	end
 end
 
 -- Class
@@ -107,19 +114,19 @@ function RateService:Destroy()
 	setmetatable(t, nil)
 end
 
-function RateService:Transform(job: Job): boolean
+function RateService:Transform(job: Job)
 	local jobId = HttpService:GenerateGUID(false)
-	return processJob(self._Maid, jobId, self._Jobs, job, self._IncrementQueue, self._OnJobComplete)
+	processJob(self._Maid, jobId, self._Jobs, job, self._IncrementQueue, self._OnJobComplete)
 end
 
-function RateService:Read(path: string, userId: number, job: Job): boolean
+function RateService:Read(path: string, userId: number, job: Job)
 	local jobId = getJobId(userId, path, "Get")
-	return processJob(self._Maid, jobId, self._Jobs, job, self._ReadQueue, self._OnJobComplete)
+	processJob(self._Maid, jobId, self._Jobs, job, self._ReadQueue, self._OnJobComplete)
 end
 
-function RateService:Write(path: string, userId: number, job: Job): boolean
+function RateService:Write(path: string, userId: number, job: Job)
 	local jobId = getJobId(userId, path, "Set")
-	return processJob(self._Maid, jobId, self._Jobs, job, self._WriteQueue, self._OnJobComplete)
+	processJob(self._Maid, jobId, self._Jobs, job, self._WriteQueue, self._OnJobComplete)
 end
 
 function RateService.new()
@@ -156,17 +163,18 @@ function RateService.new()
 				end)
 				local job = self._Jobs[jobId]
 				local jobSuccess = false
+				local message: string?
 				local jobDataSize = 0
 				if job then
-					pcall(function()
+					jobSuccess, message = pcall(function()
 						jobSuccess, jobDataSize = job()
 					end)
 				end
-				incrementData(-jobDataSize)
+				incrementData(jobDataSize)
 				task.delay(60, function()
-					incrementData(jobDataSize)
+					incrementData(-jobDataSize)
 				end)
-				self._OnJobComplete:Fire(jobId, jobSuccess)
+				self._OnJobComplete:Fire(jobId, jobSuccess, message)
 			end
 		end
 	end
@@ -184,10 +192,11 @@ function RateService.new()
 					incrementRequests(-1, -1)
 				end)
 				local job = self._TransformJobs[jobId]
-				local jobSuccess = false
+				local jobSuccess: boolean = false
+				local message: string?
 				local jobReadSize, jobWriteSize = 0, 0
 				if job then
-					pcall(function()
+					jobSuccess, message = pcall(function()
 						jobSuccess, jobReadSize, jobWriteSize = job()
 					end)
 				end
@@ -195,7 +204,7 @@ function RateService.new()
 				task.delay(60, function()
 					incrementData(-jobReadSize, -jobWriteSize)
 				end)
-				self._OnJobComplete:Fire(jobId, jobSuccess)
+				self._OnJobComplete:Fire(jobId, jobSuccess, message)
 			end
 		end
 	end
