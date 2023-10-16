@@ -8,6 +8,7 @@ local Players = game:GetService("Players")
 local ServiceProxy = require(_Packages:WaitForChild("ServiceProxy"))
 local Maid = require(_Packages:WaitForChild("Maid"))
 local TableUtil = require(_Packages:WaitForChild("TableUtil"))
+local Signal = require(_Packages:WaitForChild("Signal"))
 
 -- Modules
 local DataNode = require(_Package:WaitForChild("DataNode"))
@@ -20,12 +21,23 @@ export type DataNode<V> = DataNode.DataNode<V>
 export type OrderedDataNode = OrderedDataNode.OrderedDataNode
 export type Serializer<V> = DataNode.Serializer<V>
 export type Deserializer<V> = DataNode.Deserializer<V>
+type NodeInvokeProcessor<V> = (userId: number, value: V) -> ()
+type NodeHandlerData<V, N> = {
+	Constructor: <V>(userId: number, skipRegistration: boolean) -> N,
+	InvokeProcessors: {
+		OnLoaded: NodeInvokeProcessor<V>,
+		OnChanged: NodeInvokeProcessor<V>,
+	}
+}
+type RegularNodeHandlerData<V> = NodeHandlerData<V, DataNode<V>>
+type OrderedNodeHandlerData = NodeHandlerData<number, OrderedDataNode>
 export type DataNodeService = {
 	__index: DataNodeService,
 	_Maid: Maid,
 	_IsAlive: boolean,
-	_NodeConstructors: { [string]: <V>(userId: number, skipRegistration: boolean) -> DataNode<V>},
-	_OrderedNodeConstructors: { [string]: (userId: number, skipRegistration: boolean) -> OrderedDataNode },
+	_NodeHandlers: {[string]: RegularNodeHandlerData<unknown>},
+	_OrderedNodeHandlers: {[string]: OrderedNodeHandlerData},
+
 	_Nodes: { [number]: { [string]: DataNode<any> } },
 	_OrderedNodes: { [number]: { [string]: OrderedDataNode } },
 
@@ -41,7 +53,10 @@ export type DataNodeService = {
 		deserializer: Deserializer<V>?
 	) -> (),
 	RegisterOrderedDataNode: (self: DataNodeService, path: string, initialValue: number, getMetadata: ((userId: number) -> { [any]: any })?) -> (),
-
+	
+	SetOnDataChangedInvoke: <V>(self: DataNodeService, path: string, onInvoke: NodeInvokeProcessor<V>) -> (),
+	SetOnDataLoadedInvoke: <V>(self: DataNodeService, path: string, onInvoke: NodeInvokeProcessor<V>) -> (),
+	
 	BorrowDataNode: <V>(self: DataNodeService, userId: number, path: string, processor: ((node: DataNode<V>) -> DataNode<V>)) -> (),
 	BorrowOrderedDataNode: (self: DataNodeService, userId: number, path: string,  processor: ((node: OrderedDataNode) -> OrderedDataNode)) -> (),
 
@@ -87,6 +102,22 @@ function DataNodeService:Destroy()
 	setmetatable(t, nil)
 end
 
+function DataNodeService:SetOnDataChangedInvoke<V>(path: string, onInvoke: NodeInvokeProcessor<V>): ()
+	if self._NodeHandlers[path] then
+		self._NodeHandlers[path].InvokeProcessors.OnChanged = onInvoke :: NodeInvokeProcessor<any>
+	elseif self._OrderedNodeHandlers[path] then
+		self._OrderedNodeHandlers[path].InvokeProcessors.OnChanged = onInvoke :: NodeInvokeProcessor<any>
+	end
+end
+
+function DataNodeService:SetOnDataLoadedInvoke<V>(path: string, onInvoke: NodeInvokeProcessor<V>): ()
+	if self._NodeHandlers[path] then
+		self._NodeHandlers[path].InvokeProcessors.OnLoaded = onInvoke :: NodeInvokeProcessor<any>
+	elseif self._OrderedNodeHandlers[path] then
+		self._OrderedNodeHandlers[path].InvokeProcessors.OnLoaded = onInvoke :: NodeInvokeProcessor<any>
+	end
+end
+
 function DataNodeService:RegisterDataNode<V>(
 	path: string,
 	initialValue: V,
@@ -94,52 +125,147 @@ function DataNodeService:RegisterDataNode<V>(
 	serializer: Serializer<V>?,
 	deserializer: Deserializer<V>?
 ): ()
-	self._NodeConstructors[path] = function<G>(userId: number, skipRegistration: boolean): DataNode<G>
-		local node = self._Maid:GiveTask(
-			DataNode.new(
-				userId,
-				self.DataStoreName,
-				path,
-				if type(initialValue) == "table" then TableUtil.deepCopy(initialValue) else initialValue,
-				getMetadata,
-				serializer,
-				deserializer
+	assert(self._NodeHandlers[path] == nil and self._OrderedNodeHandlers[path] == nil, `path already registered: {path}`)	
+
+	local onLoaded = self._Maid:GiveTask(Signal.new())
+	local onChanged = self._Maid:GiveTask(Signal.new())
+
+	local handler: NodeHandlerData<V, DataNode<V>> = {
+		Constructor = function(userId: number, skipRegistration: boolean): DataNode<V>
+			local node = self._Maid:GiveTask(
+				DataNode.new(
+					userId,
+					self.DataStoreName,
+					path,
+					if type(initialValue) == "table" then TableUtil.deepCopy(initialValue) else initialValue,
+					getMetadata,
+					serializer,
+					deserializer
+				)
 			)
-		)
-		if not skipRegistration then
-			self._Nodes[userId] = self._Nodes[userId] or {}
-			self._Nodes[userId][path] = node
-		end
-		return node
-	end
+			if not skipRegistration then
+				self._Nodes[userId] = self._Nodes[userId] or {}
+				self._Nodes[userId][path] = node
+
+				local player = Players:GetPlayerByUserId(userId)
+				if player then
+					local playerMaid = self._Maid:GiveTask(Maid.new())
+
+					if node.IsLoaded then
+						onLoaded:Fire(userId, node:Get(false))
+					else
+						playerMaid:GiveTask(node.OnLoadComplete:Connect(function()
+							onLoaded:Fire(userId, node:Get(false))
+						end))
+					end
+
+					playerMaid:GiveTask(node.OnChanged:Connect(function()
+						onChanged:Fire(userId, node:Get(false))
+					end))
+					onChanged:Fire(userId, node:Get(false))
+
+					playerMaid.bind(player)
+				end
+
+
+			end
+			return node
+		end,
+		InvokeProcessors = {
+			OnLoaded = function()
+
+			end,
+			OnChanged = function()
+
+			end,
+		}
+	}
+
+	self._NodeHandlers[path] = handler :: any
+
+	self._Maid:GiveTask(onLoaded:Connect(function(userId: number, value: V)
+		handler.InvokeProcessors.OnLoaded(userId, value)
+	end))
+	
+	self._Maid:GiveTask(onChanged:Connect(function(userId: number, value: V)
+		handler.InvokeProcessors.OnChanged(userId, value)
+	end))
+
 	for userId, _ in pairs(self._Nodes) do
-		self._NodeConstructors[path](userId, false)
+		self._NodeHandlers[path].Constructor(userId, false)
 	end
+
 end
 
 function DataNodeService:RegisterOrderedDataNode(path: string, initialValue: number, getMetadata: ((userId: number) -> { [any]: any })?): ()
-	self._OrderedNodeConstructors[path] = function(userId: number, skipRegistration: boolean): OrderedDataNode
-		local node = self._Maid:GiveTask(OrderedDataNode.new(userId, self.OrderedDataStoreName, path, initialValue, getMetadata))
+	assert(self._NodeHandlers[path] == nil and self._OrderedNodeHandlers[path] == nil, `path already registered: {path}`)	
+
+	local onLoaded = self._Maid:GiveTask(Signal.new())
+	local onChanged = self._Maid:GiveTask(Signal.new())
+
+	local handler: OrderedNodeHandlerData = {
+		Constructor = function(userId: number, skipRegistration: boolean): OrderedDataNode
+			local node = self._Maid:GiveTask(OrderedDataNode.new(userId, self.OrderedDataStoreName, path, initialValue, getMetadata))
+		
+			if not skipRegistration then
+				self._OrderedNodes[userId] = self._OrderedNodes[userId] or {}
+				self._OrderedNodes[userId][path] = node
+
+				local player = Players:GetPlayerByUserId(userId)
+				if player then
+					local playerMaid = self._Maid:GiveTask(Maid.new())
+
+					if node.IsLoaded then
+						onLoaded:Fire(userId, node:Get(false))
+					else
+						playerMaid:GiveTask(node.OnLoadComplete:Connect(function()
+							onLoaded:Fire(userId, node:Get(false))
+						end))
+					end
+
+					playerMaid:GiveTask(node.OnChanged:Connect(function()
+						onChanged:Fire(userId, node:Get(false))
+					end))
+					onChanged:Fire(userId, node:Get(false))
+
+					playerMaid.bind(player)
+				end
+
+			end
+			return node
+		end,
+		InvokeProcessors = {
+			OnLoaded = function()
+				
+			end,
+			OnChanged = function()
+
+			end,
+		}
+	}
+	self._OrderedNodeHandlers[path] = handler
+
+	self._Maid:GiveTask(onLoaded:Connect(function(userId: number, value: any)
+		handler.InvokeProcessors.OnLoaded(userId, value)
+	end))
 	
-		if not skipRegistration then
-			self._OrderedNodes[userId] = self._OrderedNodes[userId] or {}
-			self._OrderedNodes[userId][path] = node
-		end
-		return node
-	end
+	self._Maid:GiveTask(onChanged:Connect(function(userId: number, value: any)
+		handler.InvokeProcessors.OnChanged(userId, value)
+	end))
+
 	for userId, _ in pairs(self._OrderedNodes) do
-		self._OrderedNodeConstructors[path](userId, false)
+		self._OrderedNodeHandlers[path].Constructor(userId, false)
 	end
 end
 
 function DataNodeService:BorrowDataNode<V>(userId: number, path: string, processor: ((node: DataNode<V>) -> DataNode<V>))
-	local node = self._NodeConstructors[path](userId, true)
+	local node: DataNode<V> = self._NodeHandlers[path].Constructor(userId, true) :: any
 	processor(node)
 	node:Destroy()
 end
 
 function DataNodeService:BorrowOrderedDataNode(userId: number, path: string, processor: ((node: OrderedDataNode) -> OrderedDataNode))
-	local node = self._OrderedNodeConstructors[path](userId, true)
+	local node = self._OrderedNodeHandlers[path].Constructor(userId, true)
 	processor(node)
 	node:Destroy()
 end
@@ -166,11 +292,11 @@ function DataNodeService:RegisterUser(userId: number)
 
 	self._Nodes[userId] = {}
 	self._OrderedNodes[userId] = {}
-	for path, constructor in pairs(self._NodeConstructors) do
-		constructor(userId, false)
+	for path, handler in pairs(self._NodeHandlers) do
+		handler.Constructor(userId, false)
 	end
-	for path, constructor in pairs(self._OrderedNodeConstructors) do
-		constructor(userId, false)
+	for path, handler in pairs(self._OrderedNodeHandlers) do
+		handler.Constructor(userId, false)
 	end
 end
 
@@ -199,8 +325,8 @@ function DataNodeService.new()
 	local self: DataNodeService = setmetatable({}, DataNodeService) :: any
 	self._IsAlive = true
 	self._Maid = Maid.new()
-	self._NodeConstructors = {}
-	self._OrderedNodeConstructors = {}
+	self._OrderedNodeHandlers = {}
+	self._NodeHandlers = {}
 	self._Nodes = {}
 	self._OrderedNodes = {}
 
