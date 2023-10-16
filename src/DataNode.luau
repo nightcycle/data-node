@@ -31,6 +31,14 @@ export type BaseDataNodeProperties<V> = {
 	_UserId: number,
 	_Domain: string,
 	_Scope: string,
+	IsLoaded: boolean,
+	OnLoadComplete: Signal,
+	_InitialValue: V?,
+	_SetJobId: string?,
+	_EncodedValue: (string | V)?,
+	_GetKeyInfo: DataStoreKeyInfo?,
+	_UpdateKeyInfo: DataStoreKeyInfo?,
+	_RemoveKeyInfo: DataStoreKeyInfo?,
 	_GetMetaData: (() -> { [any]: any })?,
 	OnChanged: Signal,
 	ClassName: "DataNode",
@@ -40,22 +48,18 @@ export type BaseDataNodeProperties<V> = {
 export type BaseDataNodeFunctions<Self, V> = {
 	init: (maid: Maid) -> nil,
 	Destroy: (self: Self) -> nil,
-	Get: (self: Self, force: boolean?) -> (V, DataStoreKeyInfo),
-	Remove: (self: Self) -> (V?, DataStoreKeyInfo),
-	Set: (self: Self, data: V) -> string,
-	Update: (self: Self, transformer: (V?) -> V?) -> (V?, DataStoreKeyInfo),
+	Get: (self: Self, force: boolean) -> (V?, DataStoreKeyInfo?),
+	Remove: (self: Self, force: boolean) -> (V?, DataStoreKeyInfo?),
+	Set: (self: Self, data: V, force: boolean) -> string?,
+	Update: (self: Self, transformer: (V?) -> V?, force: boolean) -> (V?, DataStoreKeyInfo?),
+	_Load: (self: Self) -> (),
 }
 type CompositeBaseDataNode<Self, V> = BaseDataNodeProperties<V> & BaseDataNodeFunctions<Self, V>
 export type BaseDataNode<V> = CompositeBaseDataNode<CompositeBaseDataNode<any, V>, V>
 
 type DataNodeProperties<V> = {
 	DataStore: DataStore,
-	_IsInitialized: boolean,
-	_Value: V,
-	_SetJobId: string?,
-	_EncodedValue: (string | V)?,
-	_GetKeyInfo: DataStoreKeyInfo?,
-	_UpdateKeyInfo: DataStoreKeyInfo?,
+	_Value: V?,
 	_Serialize: Serializer<V>,
 	_Deserialize: Deserializer<V>,
 } & BaseDataNodeProperties<V>
@@ -106,7 +110,6 @@ function DataNode:Destroy()
 	end
 
 	self._IsAlive = false
-	self:Set(self._Value)
 	self._Maid:Destroy()
 	local t: any = self
 	for k, v in pairs(t) do
@@ -116,185 +119,313 @@ function DataNode:Destroy()
 	return nil
 end
 
-function DataNode:Remove(): (unknown?, DataStoreKeyInfo)
-	local keyInfo: DataStoreKeyInfo
+function DataNode:Remove(force: boolean): (unknown?, DataStoreKeyInfo?)
+	if not self.IsLoaded then
+		self.OnLoadComplete:Wait()
+	end
+
+	local wasRun: boolean
+	local keyInfo: DataStoreKeyInfo?
 	local encodedFinalValue: (unknown | string)?
 
 	local success: boolean, errorMessage: string?
 
-	RateService:Write(`{self._Domain}/{self._Scope}`, self._UserId, function(): (boolean, number)
-		success, errorMessage = pcall(function()
-			encodedFinalValue, keyInfo = self.DataStore:RemoveAsync(self.Key)
-		end)
-		if not success then
-			if errorMessage then
-				warn(errorMessage)
-			end
+	local function run()
+		local runResult = RateService:Transform(
+			function(): (boolean, number, number)
+				local readSize = 0
+				success, errorMessage = pcall(function()
+					encodedFinalValue, keyInfo = self.DataStore:RemoveAsync(self.Key)
+					readSize = getByteSize(encodedFinalValue)
+				end)
+				if not success then
+					if errorMessage then
+						warn(errorMessage)
+					end
+				end
+				return success, readSize, 0
+			end,
+			force
+		)
+		if force then
+			wasRun = runResult
 		end
-		return success, 0
-	end)
-
-	assert(success, errorMessage)
-
-	local finalData: unknown?
-	if encodedFinalValue then
-		self._IsInitialized = false
-		finalData = self._Deserialize(encodedFinalValue)
 	end
+	if force then
+		run()
+	else
+		task.spawn(run)
+		wasRun = true
+		success = true
+		encodedFinalValue = self._EncodedValue
+		keyInfo = nil
+	end
+	
+	if wasRun then
+		assert(success, errorMessage)
 
-	self._EncodedValue = nil
-	self._Value = nil
-	self.OnChanged:Fire(self._Value)
+		local finalData: unknown? = self._Deserialize(encodedFinalValue)
 
-	return finalData, keyInfo
+		self._RemoveKeyInfo = keyInfo
+		self._EncodedValue = nil
+		self._Value = nil
+
+		self.OnChanged:Fire(self._Value)
+	
+		return finalData, keyInfo
+	end
+	
+	return nil, nil
 end
 
-function DataNode:Set(data: unknown): string
-	local id: string
+function DataNode:Set(data: unknown, force: boolean): string?
+	if not self.IsLoaded then
+		self.OnLoadComplete:Wait()
+	end
 
 	local encodedData: (unknown | string)? = self._Serialize(data)
-	if encodedData == self._EncodedValue and self._SetJobId ~= nil and self._IsInitialized then
-		return self._SetJobId
-	end
 
-	local metadata = if self._GetMetaData then self._GetMetaData() else nil
-	if metadata then
-		self.SetOptions:SetMetadata(metadata)
-	else
-		self.SetOptions:SetMetadata({})
-	end
-
+	local id: string?
 	local success: boolean, errorMessage: string?
-
-	RateService:Write(`{self._Domain}/{self._Scope}`, self._UserId, function(): (boolean, number)
-		local size: number = getByteSize(encodedData)
-		success, errorMessage = pcall(function()
-			id = self.DataStore:SetAsync(self.Key, encodedData, { self._UserId }, self.SetOptions)
-		end)
-		if not success then
-			if errorMessage then
-				warn(errorMessage)
+	local wasRun: boolean
+	local function run()
+		do
+			local metadata = if self._GetMetaData then self._GetMetaData() else nil
+			if metadata then
+				self.SetOptions:SetMetadata(metadata)
+			else
+				self.SetOptions:SetMetadata({})
 			end
 		end
-		return success, size
-	end)
 
-	assert(success, errorMessage)
-	self._SetJobId = id
-	self._Value = self._Deserialize(encodedData)
-	self.OnChanged:Fire(self._Value)
-
-	return id
-end
-
-function DataNode:Get(force: boolean?): (unknown, DataStoreKeyInfo)
-	if self._IsInitialized and self._GetKeyInfo and force ~= true then
-		return self._Value, self._GetKeyInfo
+		local runResult = RateService:Write(
+			`{self._Domain}/{self._Scope}`, 
+			self._UserId, 
+			function(): (boolean, number)
+				local size: number = getByteSize(encodedData)
+				success, errorMessage = pcall(function()
+					id = self.DataStore:SetAsync(self.Key, encodedData, { self._UserId }, self.SetOptions)
+				end)
+				if not success then
+					if errorMessage then
+						warn(errorMessage)
+					end
+				end
+				return success, size
+			end,
+			force
+		)
+		if force then
+			wasRun = runResult
+		end
 	end
 
-	local encodedData: (unknown | string)?, keyInfo: DataStoreKeyInfo
+	if force then
+		run()
+	else
+		task.spawn(run)
+		wasRun = true
+		success = true
+	end
+
+	if wasRun then
+		assert(success, errorMessage)
+
+		self._SetJobId = id
+		local initialEncodedValue = self._EncodedValue
+		local value = self._Deserialize(encodedData)
+
+		self._EncodedValue = encodedData
+		self._Value = value
+	
+		if encodedData ~= initialEncodedValue then
+			self.OnChanged:Fire(self._Value)
+		end
+	
+		return id
+	end
+
+	return nil
+end
+
+function DataNode:Get(force: boolean): (unknown?, DataStoreKeyInfo?)
+	if not self.IsLoaded then
+		self.OnLoadComplete:Wait()
+	end
+
+	local encodedData: (unknown | string)?, keyInfo: DataStoreKeyInfo?
 	local success: boolean, errorMessage: string?
 
-	RateService:Read(`{self._Domain}/{self._Scope}`, self._UserId, function(): (boolean, number)
-		success, errorMessage = pcall(function()
-			encodedData, keyInfo = self.DataStore:GetAsync(self.Key)
-		end)
-		if not success then
-			if errorMessage then
-				warn(errorMessage)
+	local wasRun: boolean
+	local function run()
+		local runResult = RateService:Read(
+			`{self._Domain}/{self._Scope}`, 
+			self._UserId, 
+			function(): (boolean, number)
+				success, errorMessage = pcall(function()
+					encodedData, keyInfo = self.DataStore:GetAsync(self.Key)
+				end)
+				if not success then
+					if errorMessage then
+						warn(errorMessage)
+					end
+				end
+				return success, getByteSize(encodedData)
 			end
+		)
+		if force then
+			wasRun = runResult
 		end
-		return success, getByteSize(encodedData)
-	end)
-
-	assert(success, errorMessage)
-
-	local initialEncodedData: (unknown | string)? = self._EncodedValue
-	self._EncodedValue = encodedData
-
-	if self._EncodedValue ~= nil then
-		if type(self._EncodedValue) == "string" then
-			self._Value = self._Deserialize(self._EncodedValue) -- self._Deserialize(Base64.Decode(self._EncodedValue))
-		else
-			self._Value = self._Deserialize(self._EncodedValue)
-		end
+	end
+	
+	if force then
+		run()
 	else
-		self._Value = nil
+		-- task.spawn(run) -- since reads aren't being applied retroactively there's no reason to fill up the queue
+		encodedData = self._EncodedValue
+		keyInfo = nil
+		wasRun = true
+		success = true
 	end
 
-	self._GetKeyInfo = keyInfo
+	if wasRun then
+		assert(success, errorMessage)
 
-	if initialEncodedData == encodedData then
-		self.OnChanged:Fire(self._Value)
+		local initialEncodedData: (unknown | string)? = self._EncodedValue
+		local value = self._Deserialize(self._EncodedValue)
+	
+		self._EncodedValue = encodedData
+		self._Value = value
+	
+		self._GetKeyInfo = keyInfo
+	
+		if initialEncodedData == encodedData then
+			self.OnChanged:Fire(self._Value)
+		end
+		return self._Value, keyInfo
 	end
-
-	return self._Value, keyInfo
+	return nil
 end
 
-function DataNode:Update(transformer: (unknown?) -> unknown?): (unknown?, DataStoreKeyInfo)
-	local initialEncodedValue: (unknown | string)? = self._EncodedValue
 
-	local metadata = if self._GetMetaData then self._GetMetaData() else nil
+function DataNode:_Load()
+	if self.IsLoaded then return end
+	RateService:Read(
+		`{self._Domain}/{self._Scope}`, 
+		self._UserId, 
+		function(): (boolean, number)
+			local size = 0
+			local success, errorMessage = pcall(function()
+				local encodedData, keyInfo = self.DataStore:GetAsync(self.Key)
+				size = getByteSize(encodedData)
 
-	if metadata then
-		self.SetOptions:SetMetadata(metadata)
-	else
-		self.SetOptions:SetMetadata({})
-	end
+				if self._IsAlive then
+					self._GetKeyInfo = keyInfo
 
-	local outputEncodedValue: (unknown | string)?
-	local function transformerWrapper(rawValue: (unknown | string)?): (unknown | string)?
-		local outputValue = transformer(if rawValue then self._Deserialize(rawValue) else nil)
-		if outputValue then
-			outputEncodedValue = self._Serialize(outputValue)
-		end
-		return outputEncodedValue
-	end
-
-	if self._IsInitialized and self._UpdateKeyInfo then
-		local expectedValue = transformerWrapper(self._EncodedValue)
-		if expectedValue == self._EncodedValue then
-			return self._Value, self._UpdateKeyInfo
-		end
-	end
-
-	local success: boolean, errorMessage: string?
-	local retrievedEncodedValue: (unknown | string)?, keyInfo: DataStoreKeyInfo
-
-	RateService:Transform(function(): (boolean, number, number)
-		local inputSize = 0
-		local outputSize = 0
-		success, errorMessage = pcall(function()
-			retrievedEncodedValue, keyInfo = self.DataStore:UpdateAsync(self.Key, function(input: (unknown | string)?): (unknown | string)?
-				inputSize = getByteSize(input)
-				local out: (unknown | string)? = transformerWrapper(input)
-				outputSize = getByteSize(out)
-				return out
+					if encodedData == nil and self._InitialValue ~= nil then
+						encodedData = self._Serialize(self._InitialValue)
+					end
+					self._EncodedValue = encodedData
+					self._Value = self._Deserialize(encodedData)
+					self.IsLoaded = true
+					self.OnLoadComplete:Fire(self._Value)
+					self.OnChanged:Fire(self._Value)
+				end
 			end)
-		end)
-		if not success then
-			if errorMessage then
-				warn(errorMessage)
+			if not success then
+				if errorMessage then
+					warn(errorMessage)
+				end
 			end
+			return success, size
 		end
-		return success, inputSize, outputSize
-	end)
-	assert(success, errorMessage)
+	)
+end
 
-	self._EncodedValue = outputEncodedValue
+function DataNode:Update(transformer: (unknown?) -> unknown?, force: boolean): (unknown?, DataStoreKeyInfo?)
+	if not self.IsLoaded then
+		self.OnLoadComplete:Wait()
+	end
 
-	if self._EncodedValue then
-		self._Value = self._Deserialize(self._EncodedValue)
+	local success: boolean, errorMessage: string?
+	local retrievedEncodedValue: (unknown | string)?, keyInfo: DataStoreKeyInfo?
+	local wasRun: boolean
+
+	local function transformerWrapper(rawValue: (unknown | string)?): (unknown | string)?
+		return self._Serialize(transformer(self._Deserialize(rawValue)))
+	end
+
+	local function run()
+		do
+			local metadata = if self._GetMetaData then self._GetMetaData() else nil
+
+			if metadata then
+				self.SetOptions:SetMetadata(metadata)
+			else
+				self.SetOptions:SetMetadata({})
+			end
+
+		end
+		
+		local runResult = RateService:Transform(function(): (boolean, number, number)
+			local inputSize = 0
+			local outputSize = 0
+			success, errorMessage = pcall(
+				function()
+					local runRetEncVal, retKeyInf = self.DataStore:UpdateAsync(self.Key, function(input: (unknown | string)?): (unknown | string)?
+						inputSize = getByteSize(input)
+						local out: (unknown | string)? = transformerWrapper(input)
+						outputSize = getByteSize(out)
+						return out
+					end)
+					if force then
+						retrievedEncodedValue, keyInfo = runRetEncVal, retKeyInf
+					end
+				end)
+				if not success then
+					if errorMessage then
+						warn(errorMessage)
+					end
+				end
+				return success, inputSize, outputSize
+			end,
+			force
+		)
+
+		if force then
+			wasRun = runResult
+		end
+	end
+
+	if force then
+		run()
 	else
-		self._Value = nil
-	end
-	self._UpdateKeyInfo = keyInfo
 
-	if initialEncodedValue ~= outputEncodedValue then
-		self.OnChanged:Fire(self._Value)
+		task.spawn(run) -- since reads aren't being applied retroactively there's no reason to fill up the queue
+
+		retrievedEncodedValue = transformerWrapper(self._EncodedValue)
+		keyInfo = nil
+		wasRun = true
+		success = true
 	end
 
-	return if retrievedEncodedValue then self._Deserialize(retrievedEncodedValue) else nil, keyInfo
+	if wasRun then
+		assert(success, errorMessage)
+
+		local value = self._Deserialize(self._EncodedValue)
+		local initialEncodedValue = self._EncodedValue
+		self._EncodedValue = retrievedEncodedValue
+		self._Value = value
+		self._UpdateKeyInfo = keyInfo
+	
+		if initialEncodedValue ~= retrievedEncodedValue then
+			self.OnChanged:Fire(value)
+		end
+	
+		return value, keyInfo
+	end
+
+	return nil, nil
 end
 
 function DataNode.new(
@@ -314,6 +445,7 @@ function DataNode.new(
 	local self: DataNode<unknown> = setmetatable({}, DataNode) :: any
 	self._Maid = maid
 	self._IsAlive = true
+	self._InitialValue = initialValue
 	self._GetMetaData = if getMetadata
 		then function()
 			return getMetadata(self._UserId)
@@ -340,12 +472,15 @@ function DataNode.new(
 	self._Domain = domain
 	self._Scope = scope
 
-	self._IsInitialized = false
+	self.IsLoaded = false
+	self.OnLoadComplete = self._Maid:GiveTask(Signal.new())
+
 	self._Value = initialValue
 	self._EncodedValue = self._Serialize(initialValue)
 	self._UserId = userId
 	self._SetJobId = nil
 	self._GetKeyInfo = nil
+	self._RemoveKeyInfo = nil
 	self.Key = tostring(self._UserId)
 
 	self.SetOptions = self._Maid:GiveTask(Instance.new("DataStoreSetOptions"))
@@ -361,11 +496,9 @@ function DataNode.new(
 		maid.bind(self._Player)
 	end
 
-	self._Value = self:Get()
-	if self._Value == nil then
-		self:Set(initialValue)
-	end
-	self._IsInitialized = true
+	task.spawn(function()
+		self:_Load()
+	end)
 
 	return self
 end

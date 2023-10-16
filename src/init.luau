@@ -48,8 +48,8 @@ export type DataNodeService = {
 	GetDataNode: <V>(self: DataNodeService, userId: number, path: string) -> DataNode<V>,
 	GetOrderedDataNode: (self: DataNodeService, userId: number, path: string) -> OrderedDataNode,
 
-	GetData: <V>(self: DataNodeService, userId: number, path: string, force: boolean) -> V,
-	GetOrderedData: (self: DataNodeService, userId: number, path: string, force: boolean) -> number,
+	GetData: <V>(self: DataNodeService, userId: number, path: string, force: boolean) -> V?,
+	GetOrderedData: (self: DataNodeService, userId: number, path: string, force: boolean) -> number?,
 
 	RegisterUser: (self: DataNodeService, userId: number) -> (),
 	DeregisterUser: (self: DataNodeService, userId: number) -> (),
@@ -185,14 +185,14 @@ function DataNodeService:DeregisterUser(userId: number)
 	self._OrderedNodes[userId] = nil
 end
 
-function DataNodeService:GetData<V>(userId: number, path: string, force: boolean): V
+function DataNodeService:GetData<V>(userId: number, path: string, force: boolean): V?
 	local node: DataNode<V> = self:GetDataNode(userId, path)
-	return node:Get()
+	return node:Get(force)
 end
 
-function DataNodeService:GetOrderedData(userId: number, path: string, force: boolean): number
+function DataNodeService:GetOrderedData(userId: number, path: string, force: boolean): number?
 	local node: OrderedDataNode = self:GetOrderedDataNode(userId, path)
-	return node:Get()
+	return node:Get(force)
 end
 
 function DataNodeService.new()

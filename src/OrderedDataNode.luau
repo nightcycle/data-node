@@ -18,8 +18,8 @@ export type OrderedDataNode = DataNode.BaseDataNode<number> & {
 	ClassName: "OrderedDataNode",
 	DataStore: OrderedDataStore,
 	IncrementOptions: DataStoreIncrementOptions,
-	_Value: number,
-	Increment: (self: OrderedDataNode, delta: number) -> number,
+	_Value: number?,
+	Increment: (self: OrderedDataNode, delta: number, force: boolean) -> number?,
 	new: (userId: number, domain: string, scope: string, initialValue: number, getMetadata: ((userId: number) -> { [any]: any })?) -> OrderedDataNode,
 }
 
@@ -34,29 +34,74 @@ local OrderedDataNode = {} :: OrderedDataNode
 OrderedDataNode.__index = OrderedDataNode :: any
 setmetatable(OrderedDataNode, DataNode)
 
-function OrderedDataNode:Increment(delta: number)
-	local metadata = if self._GetMetaData then self._GetMetaData() else nil
-
-	if metadata then
-		self.IncrementOptions:SetMetadata(metadata)
-	else
-		self.IncrementOptions:SetMetadata({})
+function OrderedDataNode:Increment(delta: number, force: boolean): number?
+	if not self.IsLoaded then
+		self.OnLoadComplete:Wait()
 	end
 
-	local value: number
+	local value: number?
+	local wasRun: boolean
+	local success: boolean, errorMessage: string?
 
-	RateService:Transform(function(): (boolean, number, number)
-		value = self.DataStore:IncrementAsync(self.Key, delta, { self._UserId }, self.IncrementOptions)
-		return true, 16, 16
-	end)
+	local function run()
+		do
+			local metadata = if self._GetMetaData then self._GetMetaData() else nil
 
-	if value then
-		self._Value = value
-		if delta ~= 0 then
-			self.OnChanged:Fire(self._Value)
+			if metadata then
+				self.IncrementOptions:SetMetadata(metadata)
+			else
+				self.IncrementOptions:SetMetadata({})
+			end
+		end
+
+		local runResult = RateService:Transform(
+			function(): (boolean, number, number)
+				local runValue: number?
+				success, errorMessage = pcall(function()
+					runValue = self.DataStore:IncrementAsync(self.Key, delta, { self._UserId }, self.IncrementOptions)
+				end)
+				if not success then
+					if errorMessage then
+						warn(errorMessage)
+					end
+				end
+				if force then
+					value = runValue
+				end
+				return success, 16, 16
+			end,
+			force
+		)
+		if force then
+			wasRun = runResult
 		end
 	end
-	return self._Value
+	local initialValue = self._Value
+
+	if force then
+		run()
+	else
+		task.spawn(run)
+		if initialValue then
+			value = initialValue + delta
+		end
+		wasRun = true
+		success = true
+	end
+
+	if wasRun then
+		assert(success, errorMessage)
+
+		self._Value = value
+	
+		if delta ~= 0 then
+			self.OnChanged:Fire(value)
+		end
+	
+		return value
+	end
+
+	return nil
 end
 
 function OrderedDataNode.new(
@@ -74,8 +119,11 @@ function OrderedDataNode.new(
 	self._Scope = scope
 
 	self.DataStore = DataStoreService:GetOrderedDataStore(self._Domain, self._Scope)
-
 	self.IncrementOptions = self._Maid:GiveTask(Instance.new("DataStoreIncrementOptions"))
+
+	task.spawn(function()
+		self:_Load()
+	end)
 
 	return self
 end
