@@ -235,7 +235,7 @@ function RateService.new()
 	self._ReadExpressQueue = Queue.new()
 	self._ReadExpressQueue.IsSorted = true
 
-	self._ReadExpressQueue = Queue.new()
+	self._WriteExpressQueue = Queue.new()
 	self._WriteExpressQueue.IsSorted = true
 
 	self._TransformExpressQueue = Queue.new()
