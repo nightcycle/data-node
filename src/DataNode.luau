@@ -299,7 +299,7 @@ function DataNode:Get(yield: boolean): (unknown?, DataStoreKeyInfo?)
 	
 		self._GetKeyInfo = keyInfo
 	
-		if initialEncodedData == encodedData then
+		if initialEncodedData ~= encodedData then
 			self.OnChanged:Fire(self._Value)
 		end
 		return self._Value, keyInfo
