@@ -19,7 +19,7 @@ export type OrderedDataNode = DataNode.BaseDataNode<number> & {
 	DataStore: OrderedDataStore,
 	IncrementOptions: DataStoreIncrementOptions,
 	_Value: number?,
-	Increment: (self: OrderedDataNode, delta: number, force: boolean) -> number?,
+	Increment: (self: OrderedDataNode, delta: number, yield: boolean) -> number?,
 	new: (userId: number, domain: string, scope: string, initialValue: number, getMetadata: ((userId: number) -> { [any]: any })?) -> OrderedDataNode,
 }
 
@@ -34,7 +34,7 @@ local OrderedDataNode = {} :: OrderedDataNode
 OrderedDataNode.__index = OrderedDataNode :: any
 setmetatable(OrderedDataNode, DataNode)
 
-function OrderedDataNode:Increment(delta: number, force: boolean): number?
+function OrderedDataNode:Increment(delta: number, yield: boolean): number?
 	if not self.IsLoaded then
 		self.OnLoadComplete:Wait()
 	end
@@ -65,20 +65,20 @@ function OrderedDataNode:Increment(delta: number, force: boolean): number?
 						warn(errorMessage)
 					end
 				end
-				if force then
+				if yield then
 					value = runValue
 				end
 				return success, 16, 16
 			end,
-			force
+			yield
 		)
-		if force then
+		if yield then
 			wasRun = runResult
 		end
 	end
 	local initialValue = self._Value
 
-	if force then
+	if yield then
 		run()
 	else
 		task.spawn(run)

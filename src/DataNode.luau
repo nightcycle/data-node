@@ -48,10 +48,10 @@ export type BaseDataNodeProperties<V> = {
 export type BaseDataNodeFunctions<Self, V> = {
 	init: (maid: Maid) -> nil,
 	Destroy: (self: Self) -> nil,
-	Get: (self: Self, force: boolean) -> (V?, DataStoreKeyInfo?),
-	Remove: (self: Self, force: boolean) -> (V?, DataStoreKeyInfo?),
-	Set: (self: Self, data: V, force: boolean) -> string?,
-	Update: (self: Self, transformer: (V?) -> V?, force: boolean) -> (V?, DataStoreKeyInfo?),
+	Get: (self: Self, yield: boolean) -> (V?, DataStoreKeyInfo?),
+	Remove: (self: Self, yield: boolean) -> (V?, DataStoreKeyInfo?),
+	Set: (self: Self, data: V, yield: boolean) -> string?,
+	Update: (self: Self, transformer: (V?) -> V?, yield: boolean) -> (V?, DataStoreKeyInfo?),
 	_Load: (self: Self) -> (),
 }
 type CompositeBaseDataNode<Self, V> = BaseDataNodeProperties<V> & BaseDataNodeFunctions<Self, V>
@@ -119,7 +119,7 @@ function DataNode:Destroy()
 	return nil
 end
 
-function DataNode:Remove(force: boolean): (unknown?, DataStoreKeyInfo?)
+function DataNode:Remove(yield: boolean): (unknown?, DataStoreKeyInfo?)
 	if not self.IsLoaded then
 		self.OnLoadComplete:Wait()
 	end
@@ -145,13 +145,13 @@ function DataNode:Remove(force: boolean): (unknown?, DataStoreKeyInfo?)
 				end
 				return success, readSize, 0
 			end,
-			force
+			yield
 		)
-		if force then
+		if yield then
 			wasRun = runResult
 		end
 	end
-	if force then
+	if yield then
 		run()
 	else
 		task.spawn(run)
@@ -178,7 +178,7 @@ function DataNode:Remove(force: boolean): (unknown?, DataStoreKeyInfo?)
 	return nil, nil
 end
 
-function DataNode:Set(data: unknown, force: boolean): string?
+function DataNode:Set(data: unknown, yield: boolean): string?
 	if not self.IsLoaded then
 		self.OnLoadComplete:Wait()
 	end
@@ -213,14 +213,14 @@ function DataNode:Set(data: unknown, force: boolean): string?
 				end
 				return success, size
 			end,
-			force
+			yield
 		)
-		if force then
+		if yield then
 			wasRun = runResult
 		end
 	end
 
-	if force then
+	if yield then
 		run()
 	else
 		task.spawn(run)
@@ -248,9 +248,9 @@ function DataNode:Set(data: unknown, force: boolean): string?
 	return nil
 end
 
-function DataNode:Get(force: boolean): (unknown?, DataStoreKeyInfo?)
+function DataNode:Get(yield: boolean): (unknown?, DataStoreKeyInfo?)
 	if not self.IsLoaded then
-		self.OnLoadComplete:Wait()
+		return self._Deserialize(self._Serialize(self._InitialValue))
 	end
 
 	local encodedData: (unknown | string)?, keyInfo: DataStoreKeyInfo?
@@ -273,12 +273,12 @@ function DataNode:Get(force: boolean): (unknown?, DataStoreKeyInfo?)
 				return success, getByteSize(encodedData)
 			end
 		)
-		if force then
+		if yield then
 			wasRun = runResult
 		end
 	end
 	
-	if force then
+	if yield then
 		run()
 	else
 		-- task.spawn(run) -- since reads aren't being applied retroactively there's no reason to fill up the queue
@@ -342,7 +342,7 @@ function DataNode:_Load()
 	)
 end
 
-function DataNode:Update(transformer: (unknown?) -> unknown?, force: boolean): (unknown?, DataStoreKeyInfo?)
+function DataNode:Update(transformer: (unknown?) -> unknown?, yield: boolean): (unknown?, DataStoreKeyInfo?)
 	if not self.IsLoaded then
 		self.OnLoadComplete:Wait()
 	end
@@ -378,7 +378,7 @@ function DataNode:Update(transformer: (unknown?) -> unknown?, force: boolean): (
 						outputSize = getByteSize(out)
 						return out
 					end)
-					if force then
+					if yield then
 						retrievedEncodedValue, keyInfo = runRetEncVal, retKeyInf
 					end
 				end)
@@ -389,15 +389,15 @@ function DataNode:Update(transformer: (unknown?) -> unknown?, force: boolean): (
 				end
 				return success, inputSize, outputSize
 			end,
-			force
+			yield
 		)
 
-		if force then
+		if yield then
 			wasRun = runResult
 		end
 	end
 
-	if force then
+	if yield then
 		run()
 	else
 
