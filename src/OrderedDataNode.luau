@@ -55,6 +55,8 @@ function OrderedDataNode:Increment(delta: number, yield: boolean): number?
 		end
 
 		local runResult = RateService:Transform(
+			`{self._Domain}/{self._Scope}`,
+			self.Key,
 			function(): (boolean, number, number)
 				local runValue: number?
 				success, errorMessage = pcall(function()

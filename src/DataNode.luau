@@ -132,6 +132,8 @@ function DataNode:Remove(yield: boolean): (unknown?, DataStoreKeyInfo?)
 
 	local function run()
 		local runResult = RateService:Transform(
+			`{self._Domain}/{self._Scope}`,
+			self.Key,
 			function(): (boolean, number, number)
 				local readSize = 0
 				success, errorMessage = pcall(function()
@@ -200,7 +202,7 @@ function DataNode:Set(data: unknown, yield: boolean): string?
 
 		local runResult = RateService:Write(
 			`{self._Domain}/{self._Scope}`, 
-			self._UserId, 
+			self.Key, 
 			function(): (boolean, number)
 				local size: number = getByteSize(encodedData)
 				success, errorMessage = pcall(function()
@@ -260,7 +262,7 @@ function DataNode:Get(yield: boolean): (unknown?, DataStoreKeyInfo?)
 	local function run()
 		local runResult = RateService:Read(
 			`{self._Domain}/{self._Scope}`, 
-			self._UserId, 
+			self.Key, 
 			function(): (boolean, number)
 				success, errorMessage = pcall(function()
 					encodedData, keyInfo = self.DataStore:GetAsync(self.Key)
@@ -312,7 +314,7 @@ function DataNode:_Load()
 	if self.IsLoaded then return end
 	RateService:Read(
 		`{self._Domain}/{self._Scope}`, 
-		self._UserId, 
+		self.Key, 
 		function(): (boolean, number)
 			local size = 0
 			local success, errorMessage = pcall(function()
@@ -367,7 +369,10 @@ function DataNode:Update(transformer: (unknown?) -> unknown?, yield: boolean): (
 
 		end
 		
-		local runResult = RateService:Transform(function(): (boolean, number, number)
+		local runResult = RateService:Transform(
+			`{self._Domain}/{self._Scope}`,
+			self.Key,
+			function(): (boolean, number, number)
 			local inputSize = 0
 			local outputSize = 0
 			success, errorMessage = pcall(
