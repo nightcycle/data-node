@@ -30,17 +30,17 @@ export type RateService = {
 	_OnExpressJobUpdate: Signal,
 	_OnJobComplete: Signal,
 	_OnJobUpdate: Signal,
-	_LastRead: {[string]: number},
-	_LastWrite: {[string]: number},
+	_LastRead: {[string]: number?},
+	_LastWrite: {[string]: number?},
 
-	_Jobs: {[string]: Job},
+	_Jobs: {[string]: Job?},
 
-	_JobReadTagRegistry: {[string]: {[number]: string}},
-	_JobWriteTagRegistry: {[string]: {[number]: string}},
+	_JobReadTagRegistry: {[string]: {[number]: string}?},
+	_JobWriteTagRegistry: {[string]: {[number]: string}?},
 
-	_TransformJobs: { [string]: ComplexJob },
-	_ExpressJobs: { [string]: Job },
-	_ExpressTransformJobs: { [string]: ComplexJob },
+	_TransformJobs: { [string]: ComplexJob? },
+	_ExpressJobs: { [string]: Job? },
+	_ExpressTransformJobs: { [string]: ComplexJob? },
 	_ReadsUsed: number,
 	_WritesUsed: number,
 
@@ -84,7 +84,7 @@ local COOLDOWN_TAG_PRUNE = math.max(READ_COOLDOWN, WRITE_COOLDOWN)*10
 -- Private Functions
 function checkCooldown(
 	tag: string, 
-	registry: {[string]: number}, 
+	registry: {[string]: number?}, 
 	cooldown: number, 
 	isExpress: boolean
 ): boolean
@@ -145,19 +145,20 @@ function RateService:_RegisterJob(
 	local globalQueue: Queue<string>?
 	local onJobUpdate: Signal = if isExpress then self._OnExpressJobUpdate else self._OnJobUpdate
 	local onJobComplete: Signal = if isExpress then self._OnExpressJobComplete else self._OnJobComplete
-	local jobRegistry: {[string]: Job}?
+	local jobRegistry: {[string]: Job?}?
 	local jobId: string
 
 	local tag = getRegistryTag(name, key)
-	local tagRegistries: {[number]: {[string]: {[number]: string}}} = {}
+	local tagRegistries: {[number]: {[string]: {[number]: string}?}} = {}
 	if jobType == "Set" then
 		if isExpress then 
 			queue = self._WriteExpressQueue 
+			jobRegistry = self._ExpressJobs
 		else 
 			queue = self._WriteQueue
+			jobRegistry = self._Jobs
 		end
 		jobId = getJobId(key, name, jobType)
-		jobRegistry = self._Jobs
 		table.insert(tagRegistries, self._JobWriteTagRegistry)
 	elseif jobType == "Get" then
 		queue = self._ReadExpressQueue
@@ -166,19 +167,21 @@ function RateService:_RegisterJob(
 		table.insert(tagRegistries, self._JobReadTagRegistry)
 	elseif jobType == "Transform" then
 		if isExpress then 
-			queue = self._TransformExpressQueue 
+			queue = self._TransformExpressQueue
+			jobRegistry = self._ExpressTransformJobs
 		else 
 			queue = self._TransformQueue 
+			jobRegistry = self._TransformJobs
 		end
 		jobId = HttpService:GenerateGUID()
 		globalQueue = self._GlobalTransformQueue
-		jobRegistry = self._TransformJobs
 		table.insert(tagRegistries, self._JobWriteTagRegistry)
 		table.insert(tagRegistries, self._JobReadTagRegistry)
 	end
 	for i, tagRegistry in ipairs(tagRegistries) do
 		tagRegistry[tag] = tagRegistry[tag] or {}
-		local jobList: {[number]: string} = tagRegistry[tag]
+		local jobList: {[number]: string}? = tagRegistry[tag]
+		assert(jobList)
 		if not table.find(jobList, jobId) then
 			table.insert(jobList, jobId)
 		end
@@ -362,7 +365,7 @@ function RateService.new()
 			isRead: boolean,
 			isWrite: boolean,
 			isExpress: boolean,
-			jobRegistry: {[string]: Job}
+			jobRegistry: {[string]: Job?}
 		)
 
 			if (isRead == false or getIfExpressReadAvailable(isExpress) == true) and (isWrite == false or getIfExpressWriteAvailable(isExpress) == true) then
@@ -375,18 +378,19 @@ function RateService.new()
 						end
 					end
 				end
+				local tag: string?
 
 				do
 					local nextJobId = queue:Peek()
 					if nextJobId then
-						local tag: string?
-						local registry: {[string]: {[number]: string}}
+						local registry: {[string]: {[number]: string}?}
 						if isRead then
 							registry = self._JobReadTagRegistry
 						else
 							registry = self._JobWriteTagRegistry
 						end
 						for regTag, jobList in pairs(registry) do
+							assert(jobList)
 							if table.find(jobList, nextJobId) then
 								tag = regTag
 								break
@@ -446,6 +450,8 @@ function RateService.new()
 				local jobId = queue:Get()
 				if jobId then
 					do
+						assert(tag ~= nil, `bad tag for jobId {jobId}`)
+
 						if isRead then
 							self._ReadsUsed += 1
 						end
@@ -468,25 +474,28 @@ function RateService.new()
 	
 					do
 						local job = jobRegistry[jobId]
-						if job then
-							jobSuccess, message = pcall(function()
-								local s, d1, d2 = job()
-								jobSuccess = s
-								if isRead and isWrite then
-									jobReadSize = d1
-									jobWriteSize = d2
-								elseif isRead then
-									jobReadSize = d1
-									jobWriteSize = 0
-								else --isWrite
-									jobWriteSize = d1
-									jobReadSize = 0
-								end
-							end)
+						assert(job, `job missing for {jobId} ({tag})`)
+						local runSuccess: boolean
+						runSuccess, message = pcall(function()
+							local s, d1, d2 = job()
+							jobSuccess = s
+							if isRead and isWrite then
+								jobReadSize = d1
+								jobWriteSize = d2
+							elseif isRead then
+								jobReadSize = d1
+								jobWriteSize = 0
+							else --isWrite
+								jobWriteSize = d1
+								jobReadSize = 0
+							end
+						end)
+						if runSuccess == false then
+							jobSuccess = false
 						end
 					end
 	
-					assert(jobReadSize and jobWriteSize)
+					assert(jobReadSize and jobWriteSize, `missing job size data for {tag}: {message}`)
 					do
 						if isRead then
 							self._ReadDataUsed += jobReadSize
