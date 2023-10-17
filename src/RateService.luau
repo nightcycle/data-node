@@ -35,8 +35,7 @@ export type RateService = {
 
 	_Jobs: {[string]: Job?},
 
-	_JobReadTagRegistry: {[string]: {[number]: string}?},
-	_JobWriteTagRegistry: {[string]: {[number]: string}?},
+	_JobTagRegistry: {[string]: string},
 
 	_TransformJobs: { [string]: ComplexJob? },
 	_ExpressJobs: { [string]: Job? },
@@ -149,7 +148,6 @@ function RateService:_RegisterJob(
 	local jobId: string
 
 	local tag = getRegistryTag(name, key)
-	local tagRegistries: {[number]: {[string]: {[number]: string}?}} = {}
 	if jobType == "Set" then
 		if isExpress then 
 			queue = self._WriteExpressQueue 
@@ -159,12 +157,10 @@ function RateService:_RegisterJob(
 			jobRegistry = self._Jobs
 		end
 		jobId = getJobId(key, name, jobType)
-		table.insert(tagRegistries, self._JobWriteTagRegistry)
 	elseif jobType == "Get" then
 		queue = self._ReadExpressQueue
 		jobId = getJobId(key, name, jobType)
-		jobRegistry = self._Jobs
-		table.insert(tagRegistries, self._JobReadTagRegistry)
+		jobRegistry = self._ExpressJobs
 	elseif jobType == "Transform" then
 		if isExpress then 
 			queue = self._TransformExpressQueue
@@ -175,17 +171,9 @@ function RateService:_RegisterJob(
 		end
 		jobId = HttpService:GenerateGUID()
 		globalQueue = self._GlobalTransformQueue
-		table.insert(tagRegistries, self._JobWriteTagRegistry)
-		table.insert(tagRegistries, self._JobReadTagRegistry)
 	end
-	for i, tagRegistry in ipairs(tagRegistries) do
-		tagRegistry[tag] = tagRegistry[tag] or {}
-		local jobList: {[number]: string}? = tagRegistry[tag]
-		assert(jobList)
-		if not table.find(jobList, jobId) then
-			table.insert(jobList, jobId)
-		end
-	end
+
+	self._JobTagRegistry[jobId] = tag
 
 	assert(queue ~= nil)
 	assert(jobRegistry ~= nil)
@@ -230,16 +218,6 @@ function RateService:_RegisterJob(
 	if not isUpdated then
 		jobRegistry[jobId] = nil
 
-		for i, tagRegistry in ipairs(tagRegistries) do
-			local jobList: {[number]: string}? = tagRegistry[tag]
-			if jobList then
-				local index = table.find(jobList, jobId)
-				if index then
-					table.remove(jobList, index)
-				end
-			end
-		end
-		
 		if not isSuccess then
 			if message then
 				error(message)
@@ -293,8 +271,7 @@ function RateService.new()
 	self._LastRead = {}
 	self._LastWrite = {}
 
-	self._JobReadTagRegistry = {}
-	self._JobWriteTagRegistry = {}
+	self._JobTagRegistry = {}
 
 	self._ReadsUsed = 0
 	self._WritesUsed = 0
@@ -383,19 +360,7 @@ function RateService.new()
 				do
 					local nextJobId = queue:Peek()
 					if nextJobId then
-						local registry: {[string]: {[number]: string}?}
-						if isRead then
-							registry = self._JobReadTagRegistry
-						else
-							registry = self._JobWriteTagRegistry
-						end
-						for regTag, jobList in pairs(registry) do
-							assert(jobList)
-							if table.find(jobList, nextJobId) then
-								tag = regTag
-								break
-							end
-						end
+						tag = self._JobTagRegistry[nextJobId]
 						if tag then
 							if isWrite and isRead then
 								if not (
@@ -455,9 +420,11 @@ function RateService.new()
 						if isRead then
 							self._ReadsUsed += 1
 						end
+
 						if isWrite then
 							self._WritesUsed += 1
 						end
+						
 						task.delay(60, function()
 							if isRead then
 								self._ReadsUsed -= 1
@@ -573,6 +540,28 @@ function RateService.new()
 
 			local current = tick()
 			if current - lastPrune > COOLDOWN_TAG_PRUNE then
+				print(`pruning job tags`)
+				local function getIfActiveJob(jobId: string)
+					local queues = {self._WriteQueue, self._ReadExpressQueue, self._WriteExpressQueue, self._TransformExpressQueue, self._TransformQueue}
+					for i, queue in ipairs(queues) do
+						if queue:Has(jobId) then return true end
+					end
+					return false
+				end
+				
+				for jobId, tag in pairs(self._JobTagRegistry) do
+					local readTick = self._LastRead[tag] or 0
+					local writeTick = self._LastWrite[tag] or 0
+					local mostRecentRun = math.max(readTick, writeTick)
+					if mostRecentRun < lastPrune then
+						if not getIfActiveJob(jobId) then
+							self._LastRead[tag] = nil
+							self._LastWrite[tag] = nil
+							self._JobTagRegistry[jobId] = nil
+						end
+					end
+				end
+				lastPrune = tick()
 
 			end
 		end))
