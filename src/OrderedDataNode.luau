@@ -78,8 +78,9 @@ function OrderedDataNode:Increment(delta: number, yield: boolean): number?
 			wasRun = runResult
 		end
 	end
-	local initialValue = self._Value
-
+	local initialValue = self._EncodedValue
+	assert(type(initialValue) == "number")
+	
 	if yield then
 		run()
 	else
@@ -94,6 +95,7 @@ function OrderedDataNode:Increment(delta: number, yield: boolean): number?
 	if wasRun then
 		assert(success, errorMessage)
 
+		self._EncodedValue = value
 		self._Value = value
 	
 		if delta ~= 0 then
