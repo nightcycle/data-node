@@ -57,8 +57,8 @@ export type DataNodeService = {
 	SetOnDataChangedInvoke: <V>(self: DataNodeService, path: string, onInvoke: NodeInvokeProcessor<V>) -> (),
 	SetOnDataLoadedInvoke: <V>(self: DataNodeService, path: string, onInvoke: NodeInvokeProcessor<V>) -> (),
 	
-	ConstructDataNode: <V>(self: DataNodeService, userId: number, path: string) -> (),
-	ConstructOrderedDataNode: (self: DataNodeService, userId: number, path: string) -> (),
+	ConstructDataNode: <V>(self: DataNodeService, userId: number, path: string) -> DataNode<V>,
+	ConstructOrderedDataNode: (self: DataNodeService, userId: number, path: string) -> OrderedDataNode,
 
 	GetDataNode: <V>(self: DataNodeService, userId: number, path: string) -> DataNode<V>,
 	GetOrderedDataNode: (self: DataNodeService, userId: number, path: string) -> OrderedDataNode,
