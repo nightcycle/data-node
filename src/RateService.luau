@@ -344,7 +344,10 @@ function RateService.new()
 			isExpress: boolean,
 			jobRegistry: {[string]: Job?}
 		)
-
+			if not self._IsAlive then
+				warn(`can't run job, RateService is dead`)
+				return 
+			end
 			if (isRead == false or getIfExpressReadAvailable(isExpress) == true) and (isWrite == false or getIfExpressWriteAvailable(isExpress) == true) then
 				local isNextInGlobalQueue = false
 				do
@@ -462,7 +465,11 @@ function RateService.new()
 							end
 						end)
 						if runSuccess == false then
+							warn(`job fail {jobId}: {message}`)
+
 							jobSuccess = false
+						else
+							print(`job success {jobId}`)
 						end
 					end
 	

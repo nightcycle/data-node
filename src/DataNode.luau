@@ -137,6 +137,7 @@ function DataNode:Remove(yield: boolean): (unknown?, DataStoreKeyInfo?)
 			function(): (boolean, number, number)
 				local readSize = 0
 				success, errorMessage = pcall(function()
+					assert(self._IsAlive, `remove failed: node {self._Scope} for user {self._UserId} is dead`)
 					encodedFinalValue, keyInfo = self.DataStore:RemoveAsync(self.Key)
 					readSize = getByteSize(encodedFinalValue)
 				end)
@@ -206,6 +207,8 @@ function DataNode:Set(data: unknown, yield: boolean): string?
 			function(): (boolean, number)
 				local size: number = getByteSize(encodedData)
 				success, errorMessage = pcall(function()
+					assert(self._IsAlive, `set failed: node {self._Scope} for user {self._UserId} is dead`)
+
 					id = self.DataStore:SetAsync(self.Key, encodedData, { self._UserId }, self.SetOptions)
 				end)
 				if not success then
@@ -265,6 +268,8 @@ function DataNode:Get(yield: boolean): (unknown?, DataStoreKeyInfo?)
 			self.Key, 
 			function(): (boolean, number)
 				success, errorMessage = pcall(function()
+					assert(self._IsAlive, `get failed: node {self._Scope} for user {self._UserId} is dead`)
+
 					encodedData, keyInfo = self.DataStore:GetAsync(self.Key)
 				end)
 				if not success then
@@ -377,6 +382,7 @@ function DataNode:Update(transformer: (unknown?) -> unknown?, yield: boolean): (
 			local outputSize = 0
 			success, errorMessage = pcall(
 				function()
+					assert(self._IsAlive, `update failed: node {self._Scope} for user {self._UserId} is dead`)
 					local runRetEncVal, retKeyInf = self.DataStore:UpdateAsync(self.Key, function(input: (unknown | string)?): (unknown | string)?
 						inputSize = getByteSize(input)
 						local out: (unknown | string)? = transformerWrapper(input)
