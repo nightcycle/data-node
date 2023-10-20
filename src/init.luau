@@ -57,8 +57,8 @@ export type DataNodeService = {
 	SetOnDataChangedInvoke: <V>(self: DataNodeService, path: string, onInvoke: NodeInvokeProcessor<V>) -> (),
 	SetOnDataLoadedInvoke: <V>(self: DataNodeService, path: string, onInvoke: NodeInvokeProcessor<V>) -> (),
 	
-	BorrowDataNode: <V>(self: DataNodeService, userId: number, path: string, processor: ((node: DataNode<V>) -> DataNode<V>)) -> (),
-	BorrowOrderedDataNode: (self: DataNodeService, userId: number, path: string,  processor: ((node: OrderedDataNode) -> OrderedDataNode)) -> (),
+	ConstructDataNode: <V>(self: DataNodeService, userId: number, path: string) -> (),
+	ConstructOrderedDataNode: (self: DataNodeService, userId: number, path: string) -> (),
 
 	GetDataNode: <V>(self: DataNodeService, userId: number, path: string) -> DataNode<V>,
 	GetOrderedDataNode: (self: DataNodeService, userId: number, path: string) -> OrderedDataNode,
@@ -258,16 +258,12 @@ function DataNodeService:RegisterOrderedDataNode(path: string, initialValue: num
 	end
 end
 
-function DataNodeService:BorrowDataNode<V>(userId: number, path: string, processor: ((node: DataNode<V>) -> DataNode<V>))
-	local node: DataNode<V> = self._NodeHandlers[path].Constructor(userId, true) :: any
-	processor(node)
-	node:Destroy()
+function DataNodeService:ConstructDataNode<V>(userId: number, path: string)
+	return self._NodeHandlers[path].Constructor(userId, true) :: any
 end
 
-function DataNodeService:BorrowOrderedDataNode(userId: number, path: string, processor: ((node: OrderedDataNode) -> OrderedDataNode))
-	local node = self._OrderedNodeHandlers[path].Constructor(userId, true)
-	processor(node)
-	node:Destroy()
+function DataNodeService:ConstructOrderedDataNode(userId: number, path: string)
+	return self._OrderedNodeHandlers[path].Constructor(userId, true)
 end
 
 function DataNodeService:GetDataNode<V>(userId: number, path: string): DataNode<V>
