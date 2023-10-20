@@ -346,12 +346,13 @@ function RateService.new()
 		)
 
 			if (isRead == false or getIfExpressReadAvailable(isExpress) == true) and (isWrite == false or getIfExpressWriteAvailable(isExpress) == true) then
+				local isNextInGlobalQueue = false
 				do
 					if queue == self._TransformQueue or queue == self._TransformExpressQueue then
-						if queue:Peek() ~= self._GlobalTransformQueue:Peek() then
-							return
+						if queue:Peek() == self._GlobalTransformQueue:Peek() then
+							isNextInGlobalQueue = true
 						else
-							self._GlobalTransformQueue:Get()
+							return
 						end
 					end
 				end
@@ -416,6 +417,9 @@ function RateService.new()
 				if jobId then
 					do
 						assert(tag ~= nil, `bad tag for jobId {jobId}`)
+						if isNextInGlobalQueue then
+							self._GlobalTransformQueue:Get()
+						end
 
 						if isRead then
 							self._ReadsUsed += 1
