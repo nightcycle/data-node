@@ -433,6 +433,7 @@ function RateService.new()
 						end
 						
 						task.delay(60, function()
+							assert(self._IsAlive, `RateService has died since job {jobId} began`)
 							if isRead then
 								self._ReadsUsed -= 1
 							end
@@ -483,6 +484,7 @@ function RateService.new()
 						end
 	
 						task.delay(60, function()
+							assert(self._IsAlive, `RateService has died since job {jobId} began`)
 							if isRead then
 								self._ReadDataUsed -= jobReadSize
 							end
