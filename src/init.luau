@@ -27,7 +27,7 @@ type NodeHandlerData<V, N> = {
 	InvokeProcessors: {
 		OnLoaded: NodeInvokeProcessor<V>,
 		OnChanged: NodeInvokeProcessor<V>,
-	}
+	},
 }
 type RegularNodeHandlerData<V> = NodeHandlerData<V, DataNode<V>>
 type OrderedNodeHandlerData = NodeHandlerData<number, OrderedDataNode>
@@ -35,8 +35,8 @@ export type DataNodeService = {
 	__index: DataNodeService,
 	_Maid: Maid,
 	_IsAlive: boolean,
-	_NodeHandlers: {[string]: RegularNodeHandlerData<unknown>},
-	_OrderedNodeHandlers: {[string]: OrderedNodeHandlerData},
+	_NodeHandlers: { [string]: RegularNodeHandlerData<unknown> },
+	_OrderedNodeHandlers: { [string]: OrderedNodeHandlerData },
 
 	_Nodes: { [number]: { [string]: DataNode<any> }? },
 	_OrderedNodes: { [number]: { [string]: OrderedDataNode }? },
@@ -54,10 +54,10 @@ export type DataNodeService = {
 		deserializer: Deserializer<V>?
 	) -> (),
 	RegisterOrderedDataNode: (self: DataNodeService, path: string, initialValue: number, getMetadata: ((userId: number) -> { [any]: any })?) -> (),
-	
+
 	SetOnDataChangedInvoke: <V>(self: DataNodeService, path: string, onInvoke: NodeInvokeProcessor<V>) -> (),
 	SetOnDataLoadedInvoke: <V>(self: DataNodeService, path: string, onInvoke: NodeInvokeProcessor<V>) -> (),
-	
+
 	SetOnAllDataLoadedInvoke: (self: DataNodeService, onInvoke: (userId: number) -> ()) -> (),
 	GetIfAllDataLoaded: (self: DataNodeService, userId: number) -> boolean,
 
@@ -129,16 +129,24 @@ end
 function DataNodeService:GetIfAllDataLoaded(userId: number): boolean
 	for path, handler in pairs(self._NodeHandlers) do
 		local node = self:GetDataNode(userId, path)
-		if not node then return false end
+		if not node then
+			return false
+		end
 		assert(node)
-		if not node.IsLoaded then return false end
+		if not node.IsLoaded then
+			return false
+		end
 	end
 
 	for path, handler in pairs(self._OrderedNodeHandlers) do
 		local node = self:GetOrderedDataNode(userId, path)
-		if not node then return false end
+		if not node then
+			return false
+		end
 		assert(node)
-		if not node.IsLoaded then return false end
+		if not node.IsLoaded then
+			return false
+		end
 	end
 
 	return true
@@ -151,7 +159,7 @@ function DataNodeService:RegisterDataNode<V>(
 	serializer: Serializer<V>?,
 	deserializer: Deserializer<V>?
 ): ()
-	assert(self._NodeHandlers[path] == nil and self._OrderedNodeHandlers[path] == nil, `path already registered: {path}`)	
+	assert(self._NodeHandlers[path] == nil and self._OrderedNodeHandlers[path] == nil, `path already registered: {path}`)
 
 	local onLoaded = self._Maid:GiveTask(Signal.new())
 	local onChanged = self._Maid:GiveTask(Signal.new())
@@ -170,7 +178,7 @@ function DataNodeService:RegisterDataNode<V>(
 				)
 			)
 			if not skipRegistration then
-				local nodes = (self._Nodes[userId] or {}) :: {[string]: DataNode<V>}
+				local nodes = (self._Nodes[userId] or {}) :: { [string]: DataNode<V> }
 				nodes[path] = node
 				self._Nodes[userId] = nodes
 				local player = Players:GetPlayerByUserId(userId)
@@ -192,19 +200,13 @@ function DataNodeService:RegisterDataNode<V>(
 
 					playerMaid.bind(player)
 				end
-
-
 			end
 			return node
 		end,
 		InvokeProcessors = {
-			OnLoaded = function()
-
-			end,
-			OnChanged = function()
-
-			end,
-		}
+			OnLoaded = function() end,
+			OnChanged = function() end,
+		},
 	}
 
 	self._NodeHandlers[path] = handler :: any
@@ -215,7 +217,7 @@ function DataNodeService:RegisterDataNode<V>(
 			self._OnAllDataLoadedInvoke(userId)
 		end
 	end))
-	
+
 	self._Maid:GiveTask(onChanged:Connect(function(userId: number, value: V)
 		handler.InvokeProcessors.OnChanged(userId, value)
 	end))
@@ -223,11 +225,10 @@ function DataNodeService:RegisterDataNode<V>(
 	for userId, _ in pairs(self._Nodes) do
 		self._NodeHandlers[path].Constructor(userId, false)
 	end
-
 end
 
 function DataNodeService:RegisterOrderedDataNode(path: string, initialValue: number, getMetadata: ((userId: number) -> { [any]: any })?): ()
-	assert(self._NodeHandlers[path] == nil and self._OrderedNodeHandlers[path] == nil, `path already registered: {path}`)	
+	assert(self._NodeHandlers[path] == nil and self._OrderedNodeHandlers[path] == nil, `path already registered: {path}`)
 
 	local onLoaded = self._Maid:GiveTask(Signal.new())
 	local onChanged = self._Maid:GiveTask(Signal.new())
@@ -235,9 +236,9 @@ function DataNodeService:RegisterOrderedDataNode(path: string, initialValue: num
 	local handler: OrderedNodeHandlerData = {
 		Constructor = function(userId: number, skipRegistration: boolean): OrderedDataNode
 			local node = self._Maid:GiveTask(OrderedDataNode.new(userId, self.OrderedDataStoreName, path, initialValue, getMetadata))
-		
+
 			if not skipRegistration then
-				local orderedNodes = (self._OrderedNodes[userId] or {}) :: {[string]: OrderedDataNode}
+				local orderedNodes = (self._OrderedNodes[userId] or {}) :: { [string]: OrderedDataNode }
 				orderedNodes[path] = node
 				self._OrderedNodes[userId] = orderedNodes
 
@@ -260,18 +261,13 @@ function DataNodeService:RegisterOrderedDataNode(path: string, initialValue: num
 
 					playerMaid.bind(player)
 				end
-
 			end
 			return node
 		end,
 		InvokeProcessors = {
-			OnLoaded = function()
-				
-			end,
-			OnChanged = function()
-
-			end,
-		}
+			OnLoaded = function() end,
+			OnChanged = function() end,
+		},
 	}
 	self._OrderedNodeHandlers[path] = handler
 
@@ -281,7 +277,7 @@ function DataNodeService:RegisterOrderedDataNode(path: string, initialValue: num
 			self._OnAllDataLoadedInvoke(userId)
 		end
 	end))
-	
+
 	self._Maid:GiveTask(onChanged:Connect(function(userId: number, value: any)
 		handler.InvokeProcessors.OnChanged(userId, value)
 	end))
@@ -358,9 +354,7 @@ function DataNodeService.new()
 	self._NodeHandlers = {}
 	self._Nodes = {}
 	self._OrderedNodes = {}
-	self._OnAllDataLoadedInvoke = function()
-
-	end
+	self._OnAllDataLoadedInvoke = function() end
 	self.DataStoreName = "DataNode"
 	self.OrderedDataStoreName = "OrderedDataNode"
 

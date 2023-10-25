@@ -55,34 +55,29 @@ function OrderedDataNode:Increment(delta: number, yield: boolean): number?
 			end
 		end
 
-		local runResult = RateService:Transform(
-			`{self._Domain}/{self._Scope}`,
-			self.Key,
-			function(): (boolean, number, number)
-				local runValue: number?
-				success, errorMessage = pcall(function()
-					assert(self._IsAlive, `increment failed: node {self._Scope} for user {self._UserId} is dead`)
-					runValue = self.DataStore:IncrementAsync(self.Key, delta, { self._UserId }, self.IncrementOptions)
-				end)
-				if not success then
-					if errorMessage then
-						warn(errorMessage)
-					end
+		local runResult = RateService:Transform(`{self._Domain}/{self._Scope}`, self.Key, function(): (boolean, number, number)
+			local runValue: number?
+			success, errorMessage = pcall(function()
+				assert(self._IsAlive, `increment failed: node {self._Scope} for user {self._UserId} is dead`)
+				runValue = self.DataStore:IncrementAsync(self.Key, delta, { self._UserId }, self.IncrementOptions)
+			end)
+			if not success then
+				if errorMessage then
+					warn(errorMessage)
 				end
-				if yield then
-					value = runValue
-				end
-				return success, 16, 16
-			end,
-			yield
-		)
+			end
+			if yield then
+				value = runValue
+			end
+			return success, 16, 16
+		end, yield)
 		if yield then
 			wasRun = runResult
 		end
 	end
 	local initialValue = self._EncodedValue
 	assert(type(initialValue) == "number")
-	
+
 	if yield then
 		run()
 	else
@@ -99,11 +94,11 @@ function OrderedDataNode:Increment(delta: number, yield: boolean): number?
 
 		self._EncodedValue = value
 		self._Value = value
-	
+
 		if delta ~= 0 then
 			self.OnChanged:Fire(value)
 		end
-	
+
 		return value
 	end
 

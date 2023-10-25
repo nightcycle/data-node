@@ -30,12 +30,12 @@ export type RateService = {
 	_OnExpressJobUpdate: Signal,
 	_OnJobComplete: Signal,
 	_OnJobUpdate: Signal,
-	_LastRead: {[string]: number?},
-	_LastWrite: {[string]: number?},
+	_LastRead: { [string]: number? },
+	_LastWrite: { [string]: number? },
 
-	_Jobs: {[string]: Job?},
+	_Jobs: { [string]: Job? },
 
-	_JobTagRegistry: {[string]: string},
+	_JobTagRegistry: { [string]: string },
 
 	_TransformJobs: { [string]: ComplexJob? },
 	_ExpressJobs: { [string]: Job? },
@@ -56,7 +56,7 @@ export type RateService = {
 	Transform: (self: RateService, name: string, key: string, job: ComplexJob, isExpress: boolean) -> boolean,
 	Read: (self: RateService, name: string, key: string, job: SimpleJob) -> boolean,
 	Write: (self: RateService, name: string, key: string, job: SimpleJob, isExpress: boolean) -> boolean,
-	_RegisterJob: (self: RateService, name: string,	key: string, job: Job, jobType: JobType, isExpress: boolean) -> boolean,
+	_RegisterJob: (self: RateService, name: string, key: string, job: Job, jobType: JobType, isExpress: boolean) -> boolean,
 	Destroy: (self: RateService) -> (),
 	new: () -> RateService,
 	init: (maid: Maid) -> nil,
@@ -69,11 +69,11 @@ local READS_PER_PLR_PER_MIN = math.floor(10 * BREATHING_ROOM)
 local WRITES_PER_PLR_PER_MIN = math.floor(10 * BREATHING_ROOM)
 local READ_THRU_PER_KEY_PER_MIN = math.floor(25 * MB * BREATHING_ROOM)
 local WRITE_THRU_PER_KEY_PER_MIN = math.floor(4 * MB * BREATHING_ROOM)
-local READ_COOLDOWN = 5/BREATHING_ROOM
-local WRITE_COOLDOWN = 6/BREATHING_ROOM
+local READ_COOLDOWN = 5 / BREATHING_ROOM
+local WRITE_COOLDOWN = 6 / BREATHING_ROOM
 local LOCAL_EPOCH = tick()
 local NON_EXPRESS_PROPORTION = 0.25
-local COOLDOWN_TAG_PRUNE = math.max(READ_COOLDOWN, WRITE_COOLDOWN)*10
+local COOLDOWN_TAG_PRUNE = math.max(READ_COOLDOWN, WRITE_COOLDOWN) * 10
 
 -- local STORAGE_PER_KEY = math.floor(4*MB*BREATHING_ROOM)
 
@@ -81,18 +81,13 @@ local COOLDOWN_TAG_PRUNE = math.max(READ_COOLDOWN, WRITE_COOLDOWN)*10
 -- References
 
 -- Private Functions
-function checkCooldown(
-	tag: string, 
-	registry: {[string]: number?}, 
-	cooldown: number, 
-	isExpress: boolean
-): boolean
+function checkCooldown(tag: string, registry: { [string]: number? }, cooldown: number, isExpress: boolean): boolean
 	local lastUsage = registry[tag]
 	cooldown = if isExpress then cooldown / NON_EXPRESS_PROPORTION else cooldown
 	if lastUsage then
 		local currentUsage = tick()
 		if currentUsage - lastUsage > cooldown then
-			currentUsage += 1/15
+			currentUsage += 1 / 15
 			return true
 		end
 		return false
@@ -107,7 +102,6 @@ end
 function getJobId(key: string, name: string, jobType: JobType): string
 	return `{jobType}_{getRegistryTag(name, key)}`
 end
-
 
 -- Class
 local CurrentRateService: RateService = nil :: any
@@ -130,29 +124,22 @@ function RateService:Destroy()
 	setmetatable(t, nil)
 end
 
-
-function RateService:_RegisterJob(
-	name: string, 
-	key: string,
-	job: Job,
-	jobType: JobType,
-	isExpress: boolean
-): boolean
+function RateService:_RegisterJob(name: string, key: string, job: Job, jobType: JobType, isExpress: boolean): boolean
 	local maid = self._Maid:GiveTask(Maid.new())
 
 	local queue: Queue<string>?
 	local globalQueue: Queue<string>?
 	local onJobUpdate: Signal = if isExpress then self._OnExpressJobUpdate else self._OnJobUpdate
 	local onJobComplete: Signal = if isExpress then self._OnExpressJobComplete else self._OnJobComplete
-	local jobRegistry: {[string]: Job?}?
+	local jobRegistry: { [string]: Job? }?
 	local jobId: string
 
 	local tag = getRegistryTag(name, key)
 	if jobType == "Set" then
-		if isExpress then 
-			queue = self._WriteExpressQueue 
+		if isExpress then
+			queue = self._WriteExpressQueue
 			jobRegistry = self._ExpressJobs
-		else 
+		else
 			queue = self._WriteQueue
 			jobRegistry = self._Jobs
 		end
@@ -162,11 +149,11 @@ function RateService:_RegisterJob(
 		jobId = getJobId(key, name, jobType)
 		jobRegistry = self._ExpressJobs
 	elseif jobType == "Transform" then
-		if isExpress then 
+		if isExpress then
 			queue = self._TransformExpressQueue
 			jobRegistry = self._ExpressTransformJobs
-		else 
-			queue = self._TransformQueue 
+		else
+			queue = self._TransformQueue
 			jobRegistry = self._TransformJobs
 		end
 		jobId = HttpService:GenerateGUID()
@@ -184,7 +171,7 @@ function RateService:_RegisterJob(
 	local isUpdated = false
 	local message: string?
 
-	local fullPriority = -(LOCAL_EPOCH-tick())
+	local fullPriority = -(LOCAL_EPOCH - tick())
 
 	if queue:Has(jobId) then
 		queue:Remove(jobId)
@@ -228,34 +215,16 @@ function RateService:_RegisterJob(
 	return not isUpdated
 end
 
-function RateService:Transform(name: string, key: string, job: SimpleJob,isExpress: boolean): boolean
-	return self:_RegisterJob(
-		name,	
-		key,
-		job, 
-		"Transform",
-		isExpress
-	)
+function RateService:Transform(name: string, key: string, job: SimpleJob, isExpress: boolean): boolean
+	return self:_RegisterJob(name, key, job, "Transform", isExpress)
 end
 
 function RateService:Read(name: string, key: string, job: SimpleJob): boolean
-	return self:_RegisterJob(
-		name,	
-		key,
-		job, 
-		"Get",
-		true
-	)
+	return self:_RegisterJob(name, key, job, "Get", true)
 end
 
 function RateService:Write(name: string, key: string, job: SimpleJob, isExpress: boolean): boolean
-	return self:_RegisterJob(
-		name,	
-		key,
-		job, 
-		"Set",
-		isExpress
-	)
+	return self:_RegisterJob(name, key, job, "Set", isExpress)
 end
 
 function RateService.new()
@@ -263,7 +232,7 @@ function RateService.new()
 	self._IsAlive = true
 	self._Maid = Maid.new()
 	self._Jobs = {}
-	
+
 	self._TransformJobs = {}
 	self._ExpressJobs = {}
 	self._ExpressTransformJobs = {}
@@ -315,40 +284,37 @@ function RateService.new()
 
 		local function getIfExpressReadAvailable(isExpress: boolean): boolean
 			local weight = if isExpress then 1 else NON_EXPRESS_PROPORTION
-			local isReadEnabled = ((weight*playerCount * READS_PER_PLR_PER_MIN) - self._ReadsUsed > 0) 
-			and (READ_THRU_PER_KEY_PER_MIN - self._ReadDataUsed > 0)
-	
+			local isReadEnabled = ((weight * playerCount * READS_PER_PLR_PER_MIN) - self._ReadsUsed > 0)
+				and (READ_THRU_PER_KEY_PER_MIN - self._ReadDataUsed > 0)
+
 			if isExpress then
 				return isReadEnabled
 			else
 				return isReadEnabled and self._ReadExpressQueue:IsEmpty() and self._TransformExpressQueue:IsEmpty()
 			end
 		end
-	
+
 		local function getIfExpressWriteAvailable(isExpress: boolean): boolean
 			local weight = if isExpress then 1 else NON_EXPRESS_PROPORTION
-			local isWriteEnabled = ((weight*playerCount * WRITES_PER_PLR_PER_MIN) - self._WritesUsed > 0) 
-			and (WRITE_THRU_PER_KEY_PER_MIN - self._WriteDataUsed > 0)
-	
+			local isWriteEnabled = ((weight * playerCount * WRITES_PER_PLR_PER_MIN) - self._WritesUsed > 0)
+				and (WRITE_THRU_PER_KEY_PER_MIN - self._WriteDataUsed > 0)
+
 			if isExpress then
 				return isWriteEnabled
 			else
 				return isWriteEnabled and self._WriteExpressQueue:IsEmpty() and self._TransformExpressQueue:IsEmpty()
 			end
 		end
-	
-		local function runJob(
-			queue: Queue<string>,
-			isRead: boolean,
-			isWrite: boolean,
-			isExpress: boolean,
-			jobRegistry: {[string]: Job?}
-		)
+
+		local function runJob(queue: Queue<string>, isRead: boolean, isWrite: boolean, isExpress: boolean, jobRegistry: { [string]: Job? })
 			if not self._IsAlive then
 				warn(`can't run job, RateService is dead`)
-				return 
+				return
 			end
-			if (isRead == false or getIfExpressReadAvailable(isExpress) == true) and (isWrite == false or getIfExpressWriteAvailable(isExpress) == true) then
+			if
+				(isRead == false or getIfExpressReadAvailable(isExpress) == true)
+				and (isWrite == false or getIfExpressWriteAvailable(isExpress) == true)
+			then
 				local isNextInGlobalQueue = false
 				do
 					if queue == self._TransformQueue or queue == self._TransformExpressQueue then
@@ -367,46 +333,28 @@ function RateService.new()
 						tag = self._JobTagRegistry[nextJobId]
 						if tag then
 							if isWrite and isRead then
-								if not (
-									checkCooldown(
-										tag, 
-										self._LastWrite,
-										WRITE_COOLDOWN,
-										isExpress
-									) and checkCooldown(
-										tag, 
-										self._LastRead,
-										READ_COOLDOWN,
-										isExpress
-									)
-								) then
-									return
-								else
-									self._LastRead[tag] = tick() + 1/10
-									self._LastWrite[tag] = tick() + 1/10
-								end
-							elseif isRead then
-								if not checkCooldown(
-										tag, 
-										self._LastRead,
-										READ_COOLDOWN,
-										isExpress
+								if
+									not (
+										checkCooldown(tag, self._LastWrite, WRITE_COOLDOWN, isExpress)
+										and checkCooldown(tag, self._LastRead, READ_COOLDOWN, isExpress)
 									)
 								then
 									return
 								else
-									self._LastRead[tag] = tick() + 1/10
+									self._LastRead[tag] = tick() + 1 / 10
+									self._LastWrite[tag] = tick() + 1 / 10
 								end
-							elseif isWrite then
-								if not checkCooldown(
-									tag, 
-									self._LastWrite,
-									WRITE_COOLDOWN,
-									isExpress
-								) then
+							elseif isRead then
+								if not checkCooldown(tag, self._LastRead, READ_COOLDOWN, isExpress) then
 									return
 								else
-									self._LastWrite[tag] = tick() + 1/10
+									self._LastRead[tag] = tick() + 1 / 10
+								end
+							elseif isWrite then
+								if not checkCooldown(tag, self._LastWrite, WRITE_COOLDOWN, isExpress) then
+									return
+								else
+									self._LastWrite[tag] = tick() + 1 / 10
 								end
 							end
 						else
@@ -431,7 +379,7 @@ function RateService.new()
 						if isWrite then
 							self._WritesUsed += 1
 						end
-						
+
 						task.delay(60, function()
 							assert(self._IsAlive, `RateService has died since job {jobId} began`)
 							if isRead then
@@ -440,13 +388,13 @@ function RateService.new()
 							if isWrite then
 								self._WritesUsed -= 1
 							end
-						end)	
+						end)
 					end
-	
+
 					local jobReadSize: number?, jobWriteSize: number?
 					local jobSuccess: boolean = false
 					local message: string?
-	
+
 					do
 						local job = jobRegistry[jobId]
 						assert(job, `job missing for {jobId} ({tag})`)
@@ -469,11 +417,11 @@ function RateService.new()
 							warn(`job fail {jobId}: {message}`)
 
 							jobSuccess = false
-						-- else
+							-- else
 							-- print(`job success {jobId}`)
 						end
 					end
-	
+
 					assert(jobReadSize and jobWriteSize, `missing job size data for {tag}: {message}`)
 					do
 						if isRead then
@@ -482,7 +430,7 @@ function RateService.new()
 						if isWrite then
 							self._WriteDataUsed += jobWriteSize
 						end
-	
+
 						task.delay(60, function()
 							assert(self._IsAlive, `RateService has died since job {jobId} began`)
 							if isRead then
@@ -493,49 +441,25 @@ function RateService.new()
 							end
 						end)
 					end
-	
+
 					if isExpress then
 						self._OnExpressJobComplete:Fire(jobId, jobSuccess, message)
 					else
-						self._OnJobComplete:Fire(jobId, jobSuccess, message)						
+						self._OnJobComplete:Fire(jobId, jobSuccess, message)
 					end
 				end
 			end
 		end
 
 		local lastPrune = tick()
-		
+
 		self._Maid:GiveTask(RunService.Heartbeat:Connect(function(deltaTime: number)
 			playerCount = math.max(#Players:GetPlayers(), 1)
-			
-			runJob(
-				self._TransformExpressQueue,
-				true,
-				true,
-				true,
-				self._ExpressTransformJobs
-			)
-			runJob(
-				self._ReadExpressQueue,
-				true,
-				false,
-				true,
-				self._ExpressJobs
-			)
-			runJob(
-				self._WriteExpressQueue,
-				false,
-				true,
-				true,
-				self._ExpressJobs
-			)
-			runJob(
-				self._TransformQueue,
-				true,
-				true,
-				false,
-				self._TransformJobs
-			)
+
+			runJob(self._TransformExpressQueue, true, true, true, self._ExpressTransformJobs)
+			runJob(self._ReadExpressQueue, true, false, true, self._ExpressJobs)
+			runJob(self._WriteExpressQueue, false, true, true, self._ExpressJobs)
+			runJob(self._TransformQueue, true, true, false, self._TransformJobs)
 			-- runJob(
 			-- 	self._ReadQueue,
 			-- 	true,
@@ -543,25 +467,22 @@ function RateService.new()
 			-- 	false,
 			-- 	self._Jobs
 			-- )
-			runJob(
-				self._WriteQueue,
-				false,
-				true,
-				false,
-				self._Jobs
-			)
+			runJob(self._WriteQueue, false, true, false, self._Jobs)
 
 			local current = tick()
 			if current - lastPrune > COOLDOWN_TAG_PRUNE then
 				-- print(`pruning job tags`)
 				local function getIfActiveJob(jobId: string)
-					local queues = {self._WriteQueue, self._ReadExpressQueue, self._WriteExpressQueue, self._TransformExpressQueue, self._TransformQueue}
+					local queues =
+						{ self._WriteQueue, self._ReadExpressQueue, self._WriteExpressQueue, self._TransformExpressQueue, self._TransformQueue }
 					for i, queue in ipairs(queues) do
-						if queue:Has(jobId) then return true end
+						if queue:Has(jobId) then
+							return true
+						end
 					end
 					return false
 				end
-				
+
 				for jobId, tag in pairs(self._JobTagRegistry) do
 					local readTick = self._LastRead[tag] or 0
 					local writeTick = self._LastWrite[tag] or 0
@@ -575,11 +496,9 @@ function RateService.new()
 					end
 				end
 				lastPrune = tick()
-
 			end
 		end))
 	end
-	
 
 	if CurrentRateService ~= nil then
 		CurrentRateService:Destroy()

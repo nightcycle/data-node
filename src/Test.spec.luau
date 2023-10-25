@@ -19,14 +19,12 @@ local PATH = "A/B/C/D"
 return function()
 	local maid = Maid.new()
 
-
 	describe("data-node", function()
 		describe("registration", function()
 			it("call", function()
 				Package.init(maid)
 				Package:RegisterDataNode(PATH, INITIAL_VALUE)
 				Package:RegisterUser(TEST_USER_ID)
-
 			end)
 		end)
 	end)

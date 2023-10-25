@@ -132,25 +132,20 @@ function DataNode:Remove(yield: boolean): (unknown?, DataStoreKeyInfo?)
 	local success: boolean, errorMessage: string?
 
 	local function run()
-		local runResult = RateService:Transform(
-			`{self._Domain}/{self._Scope}`,
-			self.Key,
-			function(): (boolean, number, number)
-				local readSize = 0
-				success, errorMessage = pcall(function()
-					assert(self._IsAlive, `remove failed: node {self._Scope} for user {self._UserId} is dead`)
-					encodedFinalValue, keyInfo = self.DataStore:RemoveAsync(self.Key)
-					readSize = getByteSize(encodedFinalValue)
-				end)
-				if not success then
-					if errorMessage then
-						warn(errorMessage)
-					end
+		local runResult = RateService:Transform(`{self._Domain}/{self._Scope}`, self.Key, function(): (boolean, number, number)
+			local readSize = 0
+			success, errorMessage = pcall(function()
+				assert(self._IsAlive, `remove failed: node {self._Scope} for user {self._UserId} is dead`)
+				encodedFinalValue, keyInfo = self.DataStore:RemoveAsync(self.Key)
+				readSize = getByteSize(encodedFinalValue)
+			end)
+			if not success then
+				if errorMessage then
+					warn(errorMessage)
 				end
-				return success, readSize, 0
-			end,
-			yield
-		)
+			end
+			return success, readSize, 0
+		end, yield)
 		if yield then
 			wasRun = runResult
 		end
@@ -164,7 +159,7 @@ function DataNode:Remove(yield: boolean): (unknown?, DataStoreKeyInfo?)
 		encodedFinalValue = self._EncodedValue
 		keyInfo = nil
 	end
-	
+
 	if wasRun then
 		assert(success, errorMessage)
 
@@ -175,10 +170,10 @@ function DataNode:Remove(yield: boolean): (unknown?, DataStoreKeyInfo?)
 		self._Value = nil
 
 		self.OnChanged:Fire(self._Value)
-	
+
 		return finalData, keyInfo
 	end
-	
+
 	return nil, nil
 end
 
@@ -202,25 +197,20 @@ function DataNode:Set(data: unknown, yield: boolean): string?
 			end
 		end
 
-		local runResult = RateService:Write(
-			`{self._Domain}/{self._Scope}`, 
-			self.Key, 
-			function(): (boolean, number)
-				local size: number = getByteSize(encodedData)
-				success, errorMessage = pcall(function()
-					assert(self._IsAlive, `set failed: node {self._Scope} for user {self._UserId} is dead`)
+		local runResult = RateService:Write(`{self._Domain}/{self._Scope}`, self.Key, function(): (boolean, number)
+			local size: number = getByteSize(encodedData)
+			success, errorMessage = pcall(function()
+				assert(self._IsAlive, `set failed: node {self._Scope} for user {self._UserId} is dead`)
 
-					id = self.DataStore:SetAsync(self.Key, encodedData, { self._UserId }, self.SetOptions)
-				end)
-				if not success then
-					if errorMessage then
-						warn(errorMessage)
-					end
+				id = self.DataStore:SetAsync(self.Key, encodedData, { self._UserId }, self.SetOptions)
+			end)
+			if not success then
+				if errorMessage then
+					warn(errorMessage)
 				end
-				return success, size
-			end,
-			yield
-		)
+			end
+			return success, size
+		end, yield)
 		if yield then
 			wasRun = runResult
 		end
@@ -243,11 +233,11 @@ function DataNode:Set(data: unknown, yield: boolean): string?
 
 		self._EncodedValue = encodedData
 		self._Value = value
-	
+
 		if encodedData ~= initialEncodedValue then
 			self.OnChanged:Fire(self._Value)
 		end
-	
+
 		return id
 	end
 
@@ -264,28 +254,24 @@ function DataNode:Get(yield: boolean): (unknown?, DataStoreKeyInfo?)
 
 	local wasRun: boolean
 	local function run()
-		local runResult = RateService:Read(
-			`{self._Domain}/{self._Scope}`, 
-			self.Key, 
-			function(): (boolean, number)
-				success, errorMessage = pcall(function()
-					assert(self._IsAlive, `get failed: node {self._Scope} for user {self._UserId} is dead`)
+		local runResult = RateService:Read(`{self._Domain}/{self._Scope}`, self.Key, function(): (boolean, number)
+			success, errorMessage = pcall(function()
+				assert(self._IsAlive, `get failed: node {self._Scope} for user {self._UserId} is dead`)
 
-					encodedData, keyInfo = self.DataStore:GetAsync(self.Key)
-				end)
-				if not success then
-					if errorMessage then
-						warn(errorMessage)
-					end
+				encodedData, keyInfo = self.DataStore:GetAsync(self.Key)
+			end)
+			if not success then
+				if errorMessage then
+					warn(errorMessage)
 				end
-				return success, getByteSize(encodedData)
 			end
-		)
+			return success, getByteSize(encodedData)
+		end)
 		if yield then
 			wasRun = runResult
 		end
 	end
-	
+
 	if yield then
 		run()
 	else
@@ -301,12 +287,12 @@ function DataNode:Get(yield: boolean): (unknown?, DataStoreKeyInfo?)
 
 		local initialEncodedData: (unknown | string)? = self._EncodedValue
 		local value = self._Deserialize(self._EncodedValue)
-	
+
 		self._EncodedValue = encodedData
 		self._Value = value
-	
+
 		self._GetKeyInfo = keyInfo
-	
+
 		if initialEncodedData ~= encodedData then
 			self.OnChanged:Fire(self._Value)
 		end
@@ -315,39 +301,36 @@ function DataNode:Get(yield: boolean): (unknown?, DataStoreKeyInfo?)
 	return nil
 end
 
-
 function DataNode:_Load()
-	if self.IsLoaded then return end
-	RateService:Read(
-		`{self._Domain}/{self._Scope}`, 
-		self.Key, 
-		function(): (boolean, number)
-			local size = 0
-			local success, errorMessage = pcall(function()
-				local encodedData, keyInfo = self.DataStore:GetAsync(self.Key)
-				size = getByteSize(encodedData)
+	if self.IsLoaded then
+		return
+	end
+	RateService:Read(`{self._Domain}/{self._Scope}`, self.Key, function(): (boolean, number)
+		local size = 0
+		local success, errorMessage = pcall(function()
+			local encodedData, keyInfo = self.DataStore:GetAsync(self.Key)
+			size = getByteSize(encodedData)
 
-				if self._IsAlive then
-					self._GetKeyInfo = keyInfo
+			if self._IsAlive then
+				self._GetKeyInfo = keyInfo
 
-					if encodedData == nil and self._InitialValue ~= nil then
-						encodedData = self._Serialize(self._InitialValue)
-					end
-					self._EncodedValue = encodedData
-					self._Value = self._Deserialize(encodedData)
-					self.IsLoaded = true
-					self.OnLoadComplete:Fire(self._Value)
-					self.OnChanged:Fire(self._Value)
+				if encodedData == nil and self._InitialValue ~= nil then
+					encodedData = self._Serialize(self._InitialValue)
 				end
-			end)
-			if not success then
-				if errorMessage then
-					warn(errorMessage)
-				end
+				self._EncodedValue = encodedData
+				self._Value = self._Deserialize(encodedData)
+				self.IsLoaded = true
+				self.OnLoadComplete:Fire(self._Value)
+				self.OnChanged:Fire(self._Value)
 			end
-			return success, size
+		end)
+		if not success then
+			if errorMessage then
+				warn(errorMessage)
+			end
 		end
-	)
+		return success, size
+	end)
 end
 
 function DataNode:Update(transformer: (unknown?) -> unknown?, yield: boolean): (unknown?, DataStoreKeyInfo?)
@@ -372,37 +355,30 @@ function DataNode:Update(transformer: (unknown?) -> unknown?, yield: boolean): (
 			else
 				self.SetOptions:SetMetadata({})
 			end
-
 		end
-		
-		local runResult = RateService:Transform(
-			`{self._Domain}/{self._Scope}`,
-			self.Key,
-			function(): (boolean, number, number)
+
+		local runResult = RateService:Transform(`{self._Domain}/{self._Scope}`, self.Key, function(): (boolean, number, number)
 			local inputSize = 0
 			local outputSize = 0
-			success, errorMessage = pcall(
-				function()
-					assert(self._IsAlive, `update failed: node {self._Scope} for user {self._UserId} is dead`)
-					local runRetEncVal, retKeyInf = self.DataStore:UpdateAsync(self.Key, function(input: (unknown | string)?): (unknown | string)?
-						inputSize = getByteSize(input)
-						local out: (unknown | string)? = transformerWrapper(input)
-						outputSize = getByteSize(out)
-						return out
-					end)
-					if yield then
-						retrievedEncodedValue, keyInfo = runRetEncVal, retKeyInf
-					end
+			success, errorMessage = pcall(function()
+				assert(self._IsAlive, `update failed: node {self._Scope} for user {self._UserId} is dead`)
+				local runRetEncVal, retKeyInf = self.DataStore:UpdateAsync(self.Key, function(input: (unknown | string)?): (unknown | string)?
+					inputSize = getByteSize(input)
+					local out: (unknown | string)? = transformerWrapper(input)
+					outputSize = getByteSize(out)
+					return out
 				end)
-				if not success then
-					if errorMessage then
-						warn(errorMessage)
-					end
+				if yield then
+					retrievedEncodedValue, keyInfo = runRetEncVal, retKeyInf
 				end
-				return success, inputSize, outputSize
-			end,
-			yield
-		)
+			end)
+			if not success then
+				if errorMessage then
+					warn(errorMessage)
+				end
+			end
+			return success, inputSize, outputSize
+		end, yield)
 
 		if yield then
 			wasRun = runResult
@@ -412,7 +388,6 @@ function DataNode:Update(transformer: (unknown?) -> unknown?, yield: boolean): (
 	if yield then
 		run()
 	else
-
 		task.spawn(run) -- since reads aren't being applied retroactively there's no reason to fill up the queue
 
 		retrievedEncodedValue = transformerWrapper(self._EncodedValue)
@@ -429,11 +404,11 @@ function DataNode:Update(transformer: (unknown?) -> unknown?, yield: boolean): (
 		self._EncodedValue = retrievedEncodedValue
 		self._Value = value
 		self._UpdateKeyInfo = keyInfo
-	
+
 		if initialEncodedValue ~= retrievedEncodedValue then
 			self.OnChanged:Fire(value)
 		end
-	
+
 		return value, keyInfo
 	end
 
@@ -464,21 +439,23 @@ function DataNode.new(
 		end
 		else nil
 
-	self._Serialize = serializer or function(data: unknown?): (string | unknown)?
-		if type(data) == "userdata" or type(data) == "string" then
-			return CompressionUtil.Encoding.UTF8.toUTF8(CompressionUtil.Types.encode(data :: any))
-		else
-			return data
+	self._Serialize = serializer
+		or function(data: unknown?): (string | unknown)?
+			if type(data) == "userdata" or type(data) == "string" then
+				return CompressionUtil.Encoding.UTF8.toUTF8(CompressionUtil.Types.encode(data :: any))
+			else
+				return data
+			end
 		end
-	end
 
-	self._Deserialize = deserializer or function(data: (string | unknown)?): unknown?
-		if type(data) == "string" then
-			return CompressionUtil.Types.decode(CompressionUtil.Encoding.UTF8.fromUTF8(data))
-		else
-			return data
+	self._Deserialize = deserializer
+		or function(data: (string | unknown)?): unknown?
+			if type(data) == "string" then
+				return CompressionUtil.Types.decode(CompressionUtil.Encoding.UTF8.fromUTF8(data))
+			else
+				return data
+			end
 		end
-	end
 
 	self.OnChanged = onChanged
 	self._Domain = domain
