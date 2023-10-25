@@ -10,9 +10,10 @@ local Players = game:GetService("Players")
 local Maid = require(_Packages:WaitForChild("Maid"))
 local Signal = require(_Packages:WaitForChild("Signal"))
 local CompressionUtil = require(_Packages:WaitForChild("CompressionUtil"))
-local RateService = require(_Package:WaitForChild("RateService"))
 
 -- Modules
+local RateService = require(_Package:WaitForChild("RateService"))
+
 --Types
 type Table = { [any]: any }
 type Signal = Signal.Signal

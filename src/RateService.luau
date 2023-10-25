@@ -469,8 +469,8 @@ function RateService.new()
 							warn(`job fail {jobId}: {message}`)
 
 							jobSuccess = false
-						else
-							print(`job success {jobId}`)
+						-- else
+							-- print(`job success {jobId}`)
 						end
 					end
 	
@@ -553,7 +553,7 @@ function RateService.new()
 
 			local current = tick()
 			if current - lastPrune > COOLDOWN_TAG_PRUNE then
-				print(`pruning job tags`)
+				-- print(`pruning job tags`)
 				local function getIfActiveJob(jobId: string)
 					local queues = {self._WriteQueue, self._ReadExpressQueue, self._WriteExpressQueue, self._TransformExpressQueue, self._TransformQueue}
 					for i, queue in ipairs(queues) do

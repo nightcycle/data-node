@@ -3,11 +3,12 @@ local _Package = script.Parent
 local _Packages = _Package.Parent
 -- Services
 local DataStoreService = require(_Packages:WaitForChild("MockDataStoreService")) :: DataStoreService
-local RateService = require(_Package:WaitForChild("RateService"))
 
 -- Packages
 -- Modules
 local DataNode = require(_Package:WaitForChild("DataNode"))
+local RateService = require(_Package:WaitForChild("RateService"))
+
 -- Types
 export type SortedDataEntry = {
 	UserId: number,

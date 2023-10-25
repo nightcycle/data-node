@@ -38,8 +38,9 @@ export type DataNodeService = {
 	_NodeHandlers: {[string]: RegularNodeHandlerData<unknown>},
 	_OrderedNodeHandlers: {[string]: OrderedNodeHandlerData},
 
-	_Nodes: { [number]: { [string]: DataNode<any> } },
-	_OrderedNodes: { [number]: { [string]: OrderedDataNode } },
+	_Nodes: { [number]: { [string]: DataNode<any> }? },
+	_OrderedNodes: { [number]: { [string]: OrderedDataNode }? },
+	_OnAllDataLoadedInvoke: (userId: number) -> (),
 
 	DataStoreName: string,
 	OrderedDataStoreName: string,
@@ -57,6 +58,9 @@ export type DataNodeService = {
 	SetOnDataChangedInvoke: <V>(self: DataNodeService, path: string, onInvoke: NodeInvokeProcessor<V>) -> (),
 	SetOnDataLoadedInvoke: <V>(self: DataNodeService, path: string, onInvoke: NodeInvokeProcessor<V>) -> (),
 	
+	SetOnAllDataLoadedInvoke: (self: DataNodeService, onInvoke: (userId: number) -> ()) -> (),
+	GetIfAllDataLoaded: (self: DataNodeService, userId: number) -> boolean,
+
 	ConstructDataNode: <V>(self: DataNodeService, userId: number, path: string) -> DataNode<V>,
 	ConstructOrderedDataNode: (self: DataNodeService, userId: number, path: string) -> OrderedDataNode,
 
@@ -66,8 +70,8 @@ export type DataNodeService = {
 	GetData: <V>(self: DataNodeService, userId: number, path: string, force: boolean) -> V?,
 	GetOrderedData: (self: DataNodeService, userId: number, path: string, force: boolean) -> number?,
 
-	RegisterUser: (self: DataNodeService, userId: number) -> (),
-	DeregisterUser: (self: DataNodeService, userId: number) -> (),
+	_RegisterUser: (self: DataNodeService, userId: number) -> (),
+	_DeregisterUser: (self: DataNodeService, userId: number) -> (),
 
 	Destroy: (self: DataNodeService) -> (),
 	new: () -> DataNodeService,
@@ -118,6 +122,28 @@ function DataNodeService:SetOnDataLoadedInvoke<V>(path: string, onInvoke: NodeIn
 	end
 end
 
+function DataNodeService:SetOnAllDataLoadedInvoke(onInvoke: (userId: number) -> ()): ()
+	self._OnAllDataLoadedInvoke = onInvoke
+end
+
+function DataNodeService:GetIfAllDataLoaded(userId: number): boolean
+	for path, handler in pairs(self._NodeHandlers) do
+		local node = self:GetDataNode(userId, path)
+		if not node then return false end
+		assert(node)
+		if not node.IsLoaded then return false end
+	end
+
+	for path, handler in pairs(self._OrderedNodeHandlers) do
+		local node = self:GetOrderedDataNode(userId, path)
+		if not node then return false end
+		assert(node)
+		if not node.IsLoaded then return false end
+	end
+
+	return true
+end
+
 function DataNodeService:RegisterDataNode<V>(
 	path: string,
 	initialValue: V,
@@ -144,9 +170,9 @@ function DataNodeService:RegisterDataNode<V>(
 				)
 			)
 			if not skipRegistration then
-				self._Nodes[userId] = self._Nodes[userId] or {}
-				self._Nodes[userId][path] = node
-
+				local nodes = (self._Nodes[userId] or {}) :: {[string]: DataNode<V>}
+				nodes[path] = node
+				self._Nodes[userId] = nodes
 				local player = Players:GetPlayerByUserId(userId)
 				if player then
 					local playerMaid = self._Maid:GiveTask(Maid.new())
@@ -185,6 +211,9 @@ function DataNodeService:RegisterDataNode<V>(
 
 	self._Maid:GiveTask(onLoaded:Connect(function(userId: number, value: V)
 		handler.InvokeProcessors.OnLoaded(userId, value)
+		if self:GetIfAllDataLoaded(userId) then
+			self._OnAllDataLoadedInvoke(userId)
+		end
 	end))
 	
 	self._Maid:GiveTask(onChanged:Connect(function(userId: number, value: V)
@@ -208,8 +237,9 @@ function DataNodeService:RegisterOrderedDataNode(path: string, initialValue: num
 			local node = self._Maid:GiveTask(OrderedDataNode.new(userId, self.OrderedDataStoreName, path, initialValue, getMetadata))
 		
 			if not skipRegistration then
-				self._OrderedNodes[userId] = self._OrderedNodes[userId] or {}
-				self._OrderedNodes[userId][path] = node
+				local orderedNodes = (self._OrderedNodes[userId] or {}) :: {[string]: OrderedDataNode}
+				orderedNodes[path] = node
+				self._OrderedNodes[userId] = orderedNodes
 
 				local player = Players:GetPlayerByUserId(userId)
 				if player then
@@ -247,6 +277,9 @@ function DataNodeService:RegisterOrderedDataNode(path: string, initialValue: num
 
 	self._Maid:GiveTask(onLoaded:Connect(function(userId: number, value: any)
 		handler.InvokeProcessors.OnLoaded(userId, value)
+		if self:GetIfAllDataLoaded(userId) then
+			self._OnAllDataLoadedInvoke(userId)
+		end
 	end))
 	
 	self._Maid:GiveTask(onChanged:Connect(function(userId: number, value: any)
@@ -282,7 +315,7 @@ function DataNodeService:GetOrderedDataNode(userId: number, path: string): Order
 	return node
 end
 
-function DataNodeService:RegisterUser(userId: number)
+function DataNodeService:_RegisterUser(userId: number)
 	assert(self._Nodes[userId] == nil, `userId is already registered {userId}`)
 	assert(self._OrderedNodes[userId] == nil, `userId is already registered {userId}`)
 
@@ -296,7 +329,7 @@ function DataNodeService:RegisterUser(userId: number)
 	end
 end
 
-function DataNodeService:DeregisterUser(userId: number)
+function DataNodeService:_DeregisterUser(userId: number)
 	for path, node in pairs(self._Nodes[userId] or {}) do
 		node:Destroy()
 	end
@@ -325,24 +358,26 @@ function DataNodeService.new()
 	self._NodeHandlers = {}
 	self._Nodes = {}
 	self._OrderedNodes = {}
+	self._OnAllDataLoadedInvoke = function()
 
+	end
 	self.DataStoreName = "DataNode"
 	self.OrderedDataStoreName = "OrderedDataNode"
 
 	self._Maid:GiveTask(Players.PlayerAdded:Connect(function(player: Player)
-		self:RegisterUser(player.UserId)
+		self:_RegisterUser(player.UserId)
 	end))
 	self._Maid:GiveTask(Players.PlayerRemoving:Connect(function(player: Player)
-		self:DeregisterUser(player.UserId)
+		self:_DeregisterUser(player.UserId)
 	end))
 	self._Maid:GiveTask(game.Close:Connect(function()
 		for i, player in ipairs(Players:GetPlayers()) do
-			self:DeregisterUser(player.UserId)
+			self:_DeregisterUser(player.UserId)
 		end
 	end))
 	for i, player in ipairs(Players:GetPlayers()) do
 		task.spawn(function()
-			self:RegisterUser(player.UserId)
+			self:_RegisterUser(player.UserId)
 		end)
 	end
 
