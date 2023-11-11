@@ -59,7 +59,7 @@ function OrderedDataNode:Increment(delta: number, yield: boolean): number?
 			local runValue: number?
 			success, errorMessage = pcall(function()
 				assert(self._IsAlive, `increment failed: node {self._Scope} for user {self._UserId} is dead`)
-				runValue = self.DataStore:IncrementAsync(self.Key, delta, { self._UserId }, self.IncrementOptions)
+				runValue = self.DataStore:IncrementAsync(self.Key, delta)--, { self._UserId }, self.IncrementOptions)
 			end)
 			if not success then
 				if errorMessage then
