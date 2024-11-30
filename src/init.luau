@@ -397,5 +397,5 @@ function DataNodeService.init(): () -> ()
 end
 
 return ServiceProxy(function()
-	return CurrentDataNodeService or DataNodeService
+	return CurrentDataNodeService or (DataNodeService :: DataNodeService)
 end)
