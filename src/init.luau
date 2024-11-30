@@ -65,7 +65,7 @@ type DataNodeServiceImpl = {
 
 	Destroy: (self: DataNodeService) -> (),
 	new: () -> DataNodeService,
-	init: (maid: Maid) -> () -> (),
+	init: () -> () -> (),
 }
 export type DataNodeService = typeof(setmetatable({} :: {
 	_Maid: Maid,
