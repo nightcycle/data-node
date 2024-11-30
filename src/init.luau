@@ -32,20 +32,9 @@ type NodeHandlerData<V, N> = {
 }
 type RegularNodeHandlerData<V> = NodeHandlerData<V, DataNode<V>>
 type OrderedNodeHandlerData = NodeHandlerData<number, OrderedDataNode>
-export type DataNodeService = {
-	__index: DataNodeService,
-	_Maid: Maid,
-	_IsAlive: boolean,
-	_NodeHandlers: { [string]: RegularNodeHandlerData<unknown> },
-	_OrderedNodeHandlers: { [string]: OrderedNodeHandlerData },
 
-	_Nodes: { [number]: { [string]: DataNode<any> }? },
-	_OrderedNodes: { [number]: { [string]: OrderedDataNode }? },
-	_OnAllDataLoadedInvoke: (userId: number) -> (),
-
-	DataStoreName: string,
-	OrderedDataStoreName: string,
-
+type DataNodeServiceImpl = {
+	__index: DataNodeServiceImpl,
 	RegisterDataNode: <V>(
 		self: DataNodeService,
 		path: string,
@@ -76,8 +65,19 @@ export type DataNodeService = {
 
 	Destroy: (self: DataNodeService) -> (),
 	new: () -> DataNodeService,
-	init: (maid: Maid) -> nil,
+	init: (maid: Maid) -> () -> (),
 }
+export type DataNodeService = typeof(setmetatable({} :: {
+	_Maid: Maid,
+	_IsAlive: boolean,
+	_NodeHandlers: { [string]: RegularNodeHandlerData<unknown> },
+	_OrderedNodeHandlers: { [string]: OrderedNodeHandlerData },
+	_Nodes: { [number]: { [string]: DataNode<any> }? },
+	_OrderedNodes: { [number]: { [string]: OrderedDataNode }? },
+	_OnAllDataLoadedInvoke: (userId: number) -> (),
+	DataStoreName: string,
+	OrderedDataStoreName: string,
+}, {} :: DataNodeServiceImpl))
 
 -- Constants
 -- Variables
@@ -88,7 +88,7 @@ export type DataNodeService = {
 
 -- Class
 local CurrentDataNodeService: DataNodeService = nil :: any
-local DataNodeService = {} :: DataNodeService
+local DataNodeService = {} :: DataNodeServiceImpl
 DataNodeService.__index = DataNodeService
 
 function DataNodeService:Destroy()
@@ -100,11 +100,8 @@ function DataNodeService:Destroy()
 		CurrentDataNodeService = nil :: any
 	end
 	self._Maid:Destroy()
-	local t: any = self
-	for k, v in pairs(t) do
-		t[k] = nil
-	end
-	setmetatable(t, nil)
+	setmetatable(self :: any, nil)
+	table.clear(self :: any)
 end
 
 function DataNodeService:SetOnDataChangedInvoke<V>(path: string, onInvoke: NodeInvokeProcessor<V>): ()
@@ -376,7 +373,7 @@ function DataNodeService.new()
 		end)
 	end
 
-	if CurrentDataNodeService ~= nil then
+	if CurrentDataNodeService :: any ~= nil then
 		CurrentDataNodeService:Destroy()
 		CurrentDataNodeService = nil :: any
 	end
@@ -385,10 +382,18 @@ function DataNodeService.new()
 	return self
 end
 
-function DataNodeService.init(maid: Maid)
+function DataNodeService.init(): () -> ()
+	local isAlive = true
+	local maid = Maid.new()
 	maid:GiveTask(RateService.new())
 	maid:GiveTask(DataNodeService.new())
-	return nil
+	return function()
+		if not isAlive then
+			return
+		end
+		isAlive = false
+		maid:Destroy()
+	end
 end
 
 return ServiceProxy(function()
